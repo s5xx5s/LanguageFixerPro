@@ -1,4 +1,5 @@
-# Language Fixer Pro
+# Language Fixer Pro ع⇄A
+
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Python](https://img.shields.io/badge/Python-3.8%2B-yellow)](https://www.python.org/)
