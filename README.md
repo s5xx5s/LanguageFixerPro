@@ -13,7 +13,7 @@ Or `اثممخ` when you meant **hello**?
 
 **Language Fixer Pro** solves this annoyance with a single click or hotkey. It seamlessly converts mistyped text between Arabic and English without needing to retype a single word.
 
-![Screenshot](screenshot.png)
+
 
 ## Features
 
