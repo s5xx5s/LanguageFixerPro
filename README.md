@@ -29,7 +29,7 @@ Language Fixer Pro fixes this with one click.
 ### Option 2: Run from Source
 ```bash
 # Clone the repo
-git clone https://github.com/YOUR_USERNAME/LanguageFixerPro.git
+git clone https://github.com/s5xx5s/LanguageFixerPro.git
 cd LanguageFixerPro
 
 # Install dependencies

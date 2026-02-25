@@ -2,7 +2,7 @@
 Language Fixer Pro v1.0.0
 =========================
 Open Source Arabic ↔ English keyboard layout fixer.
-GitHub: https://github.com/YOUR_USERNAME/LanguageFixerPro
+GitHub: https://github.com/s5xx5s/LanguageFixerPro
 
 License: MIT
 """
