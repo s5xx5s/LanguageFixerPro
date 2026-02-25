@@ -1,32 +1,45 @@
-# Language Fixer Pro ع⇄A
+# Language Fixer Pro
 
-> Fix text typed in the wrong keyboard layout — instantly.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Python](https://img.shields.io/badge/Python-3.8%2B-yellow)](https://www.python.org/)
+[![Platform](https://img.shields.io/badge/Platform-Windows-blue)](https://www.microsoft.com/windows)
+[![Built With](https://img.shields.io/badge/Built%20With-Vibe%20Coding-purple)](https://github.com/s5xx5s)
 
-Ever typed `hgsghl` when you meant **السلام**? Or `اثممخ` when you meant **hello**?
+> **Fix text typed in the wrong keyboard layout — instantly.**
 
-Language Fixer Pro fixes this with one click.
+Ever typed `hgsghl` when you meant **السلام**?  
+Or `اثممخ` when you meant **hello**?
+
+**Language Fixer Pro** solves this annoyance with a single click or hotkey. It seamlessly converts mistyped text between Arabic and English without needing to retype a single word.
 
 ![Screenshot](screenshot.png)
 
 ## Features
 
-- **Floating Button** — appears automatically when you select text
-- **Keyboard Shortcut** — customizable (default: `Ctrl+Shift+F9`)
-- **Auto Detection** — detects whether text should be Arabic or English
-- **System Tray** — runs quietly in the background
-- **Always on Top** — optional floating window
-- **Sound Feedback** — optional beep on conversion
-- **Settings Persistence** — remembers your preferences
-- **Update Checker** — notifies you of new versions
+- **Instant Conversion**: Fixes text in milliseconds.
+- **Floating Button**: Appears automatically when you select text (Mouse or Keyboard).
+- **Keyboard Centric**: Full support for Shift + Arrow selection.
+- **Stealth Mode**: Option to hide the floating button and rely solely on shortcuts.
+- **Smart Detection**: Automatically detects if the text needs to be Arabic or English.
+- **Interactive Feedback**: Subtle sound effects and visual cues.
+- **Persistance**: Remembers your settings and window position.
+- **Tray Icon**: Minimize to the system tray to keep your taskbar clean.
+
+## Built with Vibe Coding
+
+This project is a product of **Vibe Coding**.
+We leveraged the flow state of AI-assisted development to bring this idea to life rapidly. It represents a modern approach to software engineering where intuition meets AI acceleration to solve real-world micro-frustrations efficiently.
 
 ## Installation
 
-### Option 1: Download EXE (Recommended)
-1. Go to [Releases](../../releases)
-2. Download `LanguageFixerPro.exe`
-3. Run it — no installation needed!
+### Option 1: Portable EXE (Recommended)
+1. Go to the [Releases](../../releases) page.
+2. Download `LanguageFixerPro.exe`.
+3. Run it directly — no installation required.
 
 ### Option 2: Run from Source
+If you are a developer or want to vibe with the code:
+
 ```bash
 # Clone the repo
 git clone https://github.com/s5xx5s/LanguageFixerPro.git
@@ -41,66 +54,49 @@ python main.py
 
 ## How to Use
 
-1. **Select** any mistyped text (mouse drag, double-click, or Shift+arrows)
-2. **Click** the floating blue button that appears, or press `Ctrl+Shift+F9`
-3. Text is **converted** to the correct language!
+### Floating Button Method
+1. Select any mistyped text using your Mouse or Keyboard (Shift + Arrows).
+2. A floating button "Fix Text" will appear near your cursor.
+3. Click it to convert the text instantly.
 
-## Build EXE
+### Shortcut Method
+1. Select the text.
+2. Press `Ctrl + Shift + F9` (Customizable in settings).
+3. The text will be converted immediately.
 
-```bash
-pip install pyinstaller
-python build_exe.py
-# Output: dist/LanguageFixerPro.exe
-```
-
-## Requirements
-
-- Windows 10/11
-- Python 3.8+ (for running from source)
-
-### Dependencies
-```
-customtkinter
-pynput
-pyperclip
-pystray
-Pillow
-```
+> **Note:** You can disable the floating button in settings if you prefer using shortcuts only.
 
 ## Configuration
 
-Settings are saved in `~/.langfixer_pro.json`:
+Settings are automatically saved in `~/.langfixer_pro.json`. You can modify them via the app interface:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `hotkey` | `ctrl+shift+f9` | Keyboard shortcut |
-| `direction` | `auto` | `auto`, `ar_to_en`, or `en_to_ar` |
-| `always_on_top` | `true` | Keep window on top |
-| `sound_enabled` | `true` | Beep on conversion |
+| Enable App | `True` | Toggle the tool on/off globally. |
+| Show Floating Button | `True` | Show the popup button on text selection. |
+| Always on Top | `True` | Keep the settings window above others. |
+| Sound Feedback | `True` | Play a beep sound on successful fix. |
+| Hotkey | `Ctrl+Shift+F9` | Click to record your own shortcut. |
+
+## Build EXE
+
+To build your own executable:
+
+```bash
+pip install pyinstaller
+pyinstaller --noconfirm --onefile --windowed --name "LanguageFixerPro" --icon "icon.ico" main.py
+```
 
 ## Contributing
 
-Contributions are welcome! Please:
+Contributions are welcome. If you have ideas for improving this tool:
 
-1. Fork the repo
-2. Create a feature branch (`git checkout -b feature/amazing`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing`)
-5. Open a Pull Request
-
-## Roadmap
-
-- [ ] Context-aware conversion using dictionary
-- [ ] Conversion history with undo
-- [ ] Auto-start with Windows
-- [ ] Toast notifications
-- [ ] Support for more languages (Persian, Urdu, French AZERTY)
-- [ ] Spell check after conversion
+1. Fork the repo.
+2. Create your feature branch (`git checkout -b feature/NewFeature`).
+3. Commit your changes (`git commit -m 'Add NewFeature'`).
+4. Push to the branch (`git push origin feature/NewFeature`).
+5. Open a Pull Request.
 
 ## License
 
-[MIT License](LICENSE) — free to use, modify, and distribute.
-
-## Acknowledgments
-
-Built with [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter) for the modern UI.
+Distributed under the MIT License. See `LICENSE` for more information.
