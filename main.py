@@ -28,9 +28,9 @@ import webbrowser
 APP_NAME = "Language Fixer Pro"
 APP_VERSION = "1.0.0"
 APP_AUTHOR = "Your Name"
-APP_GITHUB = "https://github.com/YOUR_USERNAME/LanguageFixerPro"
+APP_GITHUB = "https://github.com/s5xx5s/LanguageFixerPro"
 APP_LICENSE = "MIT License"
-UPDATE_CHECK_URL = "https://api.github.com/repos/YOUR_USERNAME/LanguageFixerPro/releases/latest"
+UPDATE_CHECK_URL = "https://api.github.com/repos/s5xx5s/LanguageFixerPro/releases/latest"
 
 # ---------------------------------------------------------
 # Windows API
