@@ -16,7 +16,7 @@ import threading
 import winreg
 
 APP_NAME = "Language Fixer Pro"
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.0"
 APP_PUBLISHER = "s5xx5s"
 APP_GITHUB = "https://github.com/s5xx5s/LanguageFixerPro"
 EXE_NAME = "LanguageFixerPro.exe"

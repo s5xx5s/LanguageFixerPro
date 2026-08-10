@@ -20,7 +20,7 @@ Or `اثممخ` when you meant **hello**?
 - **Instant Conversion**: Fixes text in milliseconds.
 - **Floating Button**: Appears automatically when you select text (Mouse or Keyboard).
 - **Keyboard Centric**: Full support for Shift + Arrow selection.
-- **Stealth Mode**: Option to hide the floating button and rely solely on shortcuts.
+- **Stealth Mode**: Turn the floating button off and drive everything from the hotkey — with it off, the app stops touching your clipboard on every selection.
 - **Smart Detection**: Automatically detects if the text needs to be Arabic or English.
 - **Interactive Feedback**: Subtle sound effects and visual cues.
 - **Persistance**: Remembers your settings and window position.
@@ -100,7 +100,10 @@ python main.py --minimized
 2. Press `Ctrl + Shift + F9` (Customizable in settings).
 3. The text will be converted immediately.
 
-> **Note:** You can disable the floating button in settings if you prefer using shortcuts only.
+> **Note:** Turn **Floating Button** off in settings if you prefer working from the
+> hotkey alone. Detecting a selection for the button requires a quick clipboard read,
+> so switching it off also stops the app from reading your clipboard on every
+> selection — it then only does so when you actually press the hotkey.
 
 ## Configuration
 
@@ -109,7 +112,7 @@ Settings are automatically saved in `~/.langfixer_pro.json`. You can modify them
 | Setting | Default | Description |
 |---------|---------|-------------|
 | Enable App | `True` | Toggle the tool on/off globally. |
-| Show Floating Button | `True` | Show the popup button on text selection. |
+| Floating Button | `True` | Show the popup button on text selection. Off = hotkey only. |
 | Always on Top | `True` | Keep the settings window above others. |
 | Sound Feedback | `True` | Play a beep sound on successful fix. |
 | Start with Windows | `False` | Register the app in `HKCU\...\Run` to launch minimized at logon. |

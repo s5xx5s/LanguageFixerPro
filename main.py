@@ -1,5 +1,5 @@
 """
-Language Fixer Pro v1.3.0
+Language Fixer Pro v1.4.0
 =========================
 Open Source Arabic ↔ English keyboard layout fixer.
 GitHub: https://github.com/s5xx5s/LanguageFixerPro
@@ -26,7 +26,7 @@ import webbrowser
 # ---------------------------------------------------------
 
 APP_NAME = "Language Fixer Pro"
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.0"
 APP_AUTHOR = "s5xx5s"
 APP_GITHUB = "https://github.com/s5xx5s/LanguageFixerPro"
 APP_LICENSE = "MIT License"
@@ -162,6 +162,7 @@ DEFAULT_SETTINGS = {
     "total_conversions": 0,
     "start_with_windows": False,
     "close_to_tray": True,
+    "show_floating_button": True,
 }
 
 def load_settings():
@@ -505,7 +506,7 @@ class App(ctk.CTk):
         self.settings["start_with_windows"] = is_startup_enabled()
 
         self.title(f"{APP_NAME}")
-        self.geometry("380x690")
+        self.geometry("380x730")
         self.resizable(False, False)
 
         ico = app_icon_path()
@@ -628,6 +629,10 @@ class App(ctk.CTk):
 
         self.switch_var = ctk.BooleanVar(value=True)
         self._switch_row(opts, "Enable", self.switch_var, self._toggle_active)
+        self._divider(opts)
+
+        self.floating_var = ctk.BooleanVar(value=self.settings.get("show_floating_button", True))
+        self._switch_row(opts, "Floating Button", self.floating_var, self._toggle_floating)
         self._divider(opts)
 
         self.topmost_var = ctk.BooleanVar(value=self.settings.get("always_on_top", True))
@@ -760,8 +765,13 @@ class App(ctk.CTk):
         listener.daemon = True
         listener.start()
 
+    def _floating_enabled(self):
+        return self.settings.get("show_floating_button", True)
+
     def _check_and_show(self, x, y):
-        if not self.is_active or self.processing:
+        if not self.is_active or self.processing or not self._floating_enabled():
+            # bailing out here also skips the clipboard probe below, so with the
+            # button off nothing touches the clipboard until you press the hotkey
             return
         def check():
             try:
@@ -959,12 +969,8 @@ class App(ctk.CTk):
         except: pass
         self._start_hotkey_listener()
 
-    def _show_button_at(self, x, y):
-        if self.is_active and not self.processing:
-            self.floating_btn.show_at(x, y)
-
     def _show_button_at_cursor(self):
-        if self.is_active and not self.processing:
+        if self.is_active and not self.processing and self._floating_enabled():
             x, y = get_cursor_pos()
             self.floating_btn.show_at(x, y)
 
@@ -1050,6 +1056,18 @@ class App(ctk.CTk):
     def _toggle_sound(self):
         self.settings["sound_enabled"] = self.sound_var.get()
         save_settings(self.settings)
+
+    def _toggle_floating(self):
+        v = self.floating_var.get()
+        self.settings["show_floating_button"] = v
+        save_settings(self.settings)
+        if not v:
+            self.floating_btn.hide()
+        self.status_label.configure(
+            text="Floating button on" if v else "Shortcut only",
+            text_color=C["accent_l"] if v else C["muted"],
+        )
+        self.after(2500, self._reset_status)
 
     def _toggle_startup(self):
         want = self.startup_var.get()
