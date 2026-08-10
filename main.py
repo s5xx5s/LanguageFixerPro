@@ -1,5 +1,5 @@
 """
-Language Fixer Pro v1.4.1
+Language Fixer Pro v1.5.0
 =========================
 Open Source Arabic ↔ English keyboard layout fixer.
 GitHub: https://github.com/s5xx5s/LanguageFixerPro
@@ -19,6 +19,7 @@ import sys
 import os
 import json
 import ctypes
+import subprocess
 import webbrowser
 
 # ---------------------------------------------------------
@@ -26,21 +27,26 @@ import webbrowser
 # ---------------------------------------------------------
 
 APP_NAME = "Language Fixer Pro"
-APP_VERSION = "1.4.1"
+APP_VERSION = "1.5.0"
 APP_AUTHOR = "s5xx5s"
 APP_GITHUB = "https://github.com/s5xx5s/LanguageFixerPro"
 APP_LICENSE = "MIT License"
 UPDATE_CHECK_URL = "https://api.github.com/repos/s5xx5s/LanguageFixerPro/releases/latest"
 
 APP_ID = "s5xx5s.LanguageFixerPro"          # taskbar grouping identity
-MUTEX_NAME = "Global\\LanguageFixerPro_SingleInstance"
+# "Local\" scopes the mutex to the logon session, which is what we want: one copy
+# per signed-in user. "Global\" needs SeCreateGlobalPrivilege, which a standard
+# user does not have — CreateMutexW then fails and the guard silently never fires.
+MUTEX_NAME = "Local\\LanguageFixerPro_SingleInstance"
 
 # ---------------------------------------------------------
 # Windows API
 # ---------------------------------------------------------
 
 user32 = ctypes.windll.user32
-kernel32 = ctypes.windll.kernel32
+# use_last_error so GetLastError reflects CreateMutexW and not some later ctypes call
+kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+_instance_mutex = None
 
 IS_FROZEN = getattr(sys, "frozen", False)
 
@@ -66,10 +72,31 @@ def set_app_user_model_id():
 
 def already_running():
     """True when another copy already holds the single-instance mutex."""
+    global _instance_mutex
     ERROR_ALREADY_EXISTS = 183
     try:
-        kernel32.CreateMutexW(None, False, MUTEX_NAME)
-        return kernel32.GetLastError() == ERROR_ALREADY_EXISTS
+        kernel32.CreateMutexW.restype = ctypes.c_void_p
+        kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
+        handle = kernel32.CreateMutexW(None, False, MUTEX_NAME)
+        err = ctypes.get_last_error()
+        if not handle:
+            return False          # could not create it — better to run than to block
+        _instance_mutex = handle  # hold it open for the life of the process
+        return err == ERROR_ALREADY_EXISTS
+    except Exception:
+        return False
+
+
+def activate_existing_instance():
+    """Surface the copy that is already running, rather than nagging with a dialog."""
+    SW_RESTORE = 9
+    try:
+        hwnd = user32.FindWindowW(None, APP_NAME)
+        if not hwnd:
+            return False
+        user32.ShowWindow(hwnd, SW_RESTORE)
+        user32.SetForegroundWindow(hwnd)
+        return True
     except Exception:
         return False
 
@@ -163,6 +190,7 @@ DEFAULT_SETTINGS = {
     "start_with_windows": False,
     "close_to_tray": True,
     "show_floating_button": True,
+    "language": "en",
 }
 
 def load_settings():
@@ -258,6 +286,307 @@ C = {
 
 
 # ---------------------------------------------------------
+# Interface language
+# ---------------------------------------------------------
+
+TR = {
+    "en": {
+        "dir": "ltr",
+        "tagline": "Select text  ·  {hk}",
+        "paused": "Paused",
+        "conversions_one": "1 conversion",
+        "conversions_many": "{n} conversions",
+        "enable": "Enable",
+        "floating_button": "Floating Button",
+        "always_on_top": "Always on Top",
+        "sound_feedback": "Sound Feedback",
+        "start_with_windows": "Start with Windows",
+        "conversion_mode": "Conversion Mode",
+        "auto_detect": "Auto Detect",
+        "ar_to_en": "Arabic  →  English",
+        "en_to_ar": "English  →  Arabic",
+        "keyboard_shortcut": "Keyboard Shortcut",
+        "click_to_record": "Click to record",
+        "press_keys": "Press keys...",
+        "press_shortcut": "Press your shortcut",
+        "saved": "Saved!",
+        "hide_to_tray": "Hide to Tray",
+        "exit": "Exit",
+        "footer_parts": ["v{v}", "·", "Open Source", "·", "MIT License"],
+        "startup_on": "Startup enabled",
+        "startup_off": "Startup disabled",
+        "startup_failed": "Could not update startup",
+        "floating_on": "Floating button on",
+        "floating_off": "Shortcut only",
+        "update_available": "Update available: v{v}",
+        "lang_switch": "العربية",
+        # tray
+        "tray_show": "Show",
+        "tray_enabled": "Enabled",
+        "tray_exit": "Exit",
+        # about
+        "about_title": "About {app}",
+        "version": "Version {v}",
+        "developer": "Developer",
+        "license": "License",
+        "total_conversions": "Total Conversions",
+        "github": "GitHub",
+        "check_updates": "Check Updates",
+        "checking": "Checking...",
+        "up_to_date": "You're up to date!",
+        "check_failed": "Could not check for updates",
+        "new_version": "New version available: v{v}!",
+        # welcome
+        "welcome_title": "Welcome!",
+        "welcome_sub": "Welcome to {app} v{v}",
+        "step1": "Select any mistyped text",
+        "step2": "Click the floating blue button",
+        "step3": "Text converts to the right language!",
+        "shortcut_hint": "You can also use  {hk}  as a shortcut",
+        "get_started": "Get Started",
+        # updater
+        "update_title": "Update Available",
+        "update_body": "Version {new} is available.\nYou are running version {cur}.",
+        "update_install": "Download & Install",
+        "update_later": "Later",
+        "update_downloading": "Downloading...  {pct}%",
+        "update_verifying": "Preparing installer...",
+        "update_launching": "Installing. The app will restart.",
+        "update_failed": "Download failed: {err}",
+        "update_portable": "You are running the portable version.\n"
+                           "Download the new version from the releases page.",
+        "open_releases": "Open Releases",
+        "close": "Close",
+    },
+    "ar": {
+        "dir": "rtl",
+        "tagline": "حدّد نصاً  ·  {hk}",
+        "paused": "متوقف",
+        "conversions_one": "تحويل واحد",
+        "conversions_many": "{n} تحويل",
+        "enable": "تفعيل",
+        "floating_button": "الزر العائم",
+        "always_on_top": "دائماً في المقدمة",
+        "sound_feedback": "تنبيه صوتي",
+        "start_with_windows": "التشغيل مع ويندوز",
+        "conversion_mode": "وضع التحويل",
+        "auto_detect": "كشف تلقائي",
+        "ar_to_en": "عربي  ←  إنجليزي",
+        "en_to_ar": "إنجليزي  ←  عربي",
+        "keyboard_shortcut": "اختصار لوحة المفاتيح",
+        "click_to_record": "انقر للتسجيل",
+        "press_keys": "...اضغط المفاتيح",
+        "press_shortcut": "اضغط اختصارك",
+        "saved": "تم الحفظ",
+        "hide_to_tray": "إخفاء في الشريط",
+        "exit": "خروج",
+        # Tk has no bidi engine, so a mixed Arabic/Latin line comes out transposed.
+        # The footer is laid out as one label per run instead (see create_widgets),
+        # and the "v" prefix keeps the version in Latin digits.
+        "footer_parts": ["مفتوح المصدر", "·", "رخصة", "MIT", "·", "v{v}"],
+        "startup_on": "تم تفعيل التشغيل التلقائي",
+        "startup_off": "تم إيقاف التشغيل التلقائي",
+        "startup_failed": "تعذّر تحديث التشغيل التلقائي",
+        "floating_on": "الزر العائم مُفعّل",
+        "floating_off": "الاختصار فقط",
+        "update_available": "يتوفر تحديث: v{v}",
+        "lang_switch": "English",
+        # tray
+        "tray_show": "إظهار",
+        "tray_enabled": "مُفعّل",
+        "tray_exit": "خروج",
+        # about
+        "about_title": "عن {app}",
+        "version": "الإصدار v{v}",
+        "developer": "المطوّر",
+        "license": "الرخصة",
+        "total_conversions": "مجموع التحويلات",
+        "github": "GitHub",
+        "check_updates": "فحص التحديثات",
+        "checking": "...جارٍ الفحص",
+        "up_to_date": "أنت على أحدث إصدار",
+        "check_failed": "تعذّر فحص التحديثات",
+        "new_version": "يتوفر إصدار جديد: v{v}",
+        # welcome
+        "welcome_title": "مرحباً!",
+        "welcome_sub": "أهلاً بك في {app} v{v}",
+        "step1": "حدّد أي نص مكتوب بلغة خاطئة",
+        "step2": "انقر الزر الأزرق العائم",
+        "step3": "يتحوّل النص إلى اللغة الصحيحة",
+        "shortcut_hint": "يمكنك أيضاً استخدام  {hk}  كاختصار",
+        "get_started": "لنبدأ",
+        # updater
+        "update_title": "يتوفر تحديث",
+        "update_body": "الإصدار v{new} متاح الآن.\nأنت تستخدم الإصدار v{cur}.",
+        "update_install": "تنزيل وتثبيت",
+        "update_later": "لاحقاً",
+        "update_downloading": "جارٍ التنزيل...  {pct}%",
+        "update_verifying": "جارٍ تجهيز المُثبِّت...",
+        "update_launching": "جارٍ التثبيت. سيُعاد تشغيل التطبيق.",
+        "update_failed": "فشل التنزيل: {err}",
+        "update_portable": "أنت تستخدم النسخة المحمولة.\n"
+                           "نزّل الإصدار الجديد من صفحة الإصدارات.",
+        "open_releases": "فتح صفحة الإصدارات",
+        "close": "إغلاق",
+    },
+}
+
+
+def tr(lang, key, **kw):
+    """Translate. Falls back to English so a missing key never breaks the UI."""
+    table = TR.get(lang) or TR["en"]
+    text = table.get(key) or TR["en"].get(key, key)
+    return text.format(**kw) if kw else text
+
+
+def is_rtl(lang):
+    return TR.get(lang, TR["en"])["dir"] == "rtl"
+
+
+def make_globe_image(px=64, color="#94A3B8"):
+    """A simple line-art globe, drawn at 4x and downsampled so it stays crisp."""
+    s = px * 4
+    img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    w = max(2, s // 22)
+    pad = w
+    d.ellipse((pad, pad, s - pad, s - pad), outline=color, width=w)
+    # meridians
+    for shrink in (0.30, 0.62):
+        rx = (s - 2 * pad) * shrink / 2
+        cx = s / 2
+        d.ellipse((cx - rx, pad, cx + rx, s - pad), outline=color, width=w)
+    # parallels
+    for fy in (0.32, 0.5, 0.68):
+        y = pad + (s - 2 * pad) * fy
+        half = ((s - 2 * pad) / 2) * (1 - abs(fy - 0.5) * 2) ** 0.5
+        d.line((s / 2 - half, y, s / 2 + half, y), fill=color, width=w)
+    return img.resize((px, px), Image.LANCZOS)
+
+
+# ---------------------------------------------------------
+# Version compare
+# ---------------------------------------------------------
+
+def version_tuple(v):
+    """'1.10.2' -> (1, 10, 2). Non-numeric parts are dropped rather than crashing."""
+    parts = []
+    for chunk in str(v).strip().lstrip("vV").split("."):
+        digits = "".join(ch for ch in chunk if ch.isdigit())
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts) or (0,)
+
+
+def is_newer(candidate, current):
+    a, b = version_tuple(candidate), version_tuple(current)
+    n = max(len(a), len(b))
+    return a + (0,) * (n - len(a)) > b + (0,) * (n - len(b))
+
+
+# ---------------------------------------------------------
+# Updater
+# ---------------------------------------------------------
+
+SETUP_ASSET_NAME = "LanguageFixerPro-Setup.exe"
+UNINSTALL_REG_PATH = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\LanguageFixerPro"
+
+# Downloads are only ever fetched from GitHub's own hosts. An asset URL that
+# points anywhere else is treated as untrusted and refused.
+ALLOWED_DOWNLOAD_HOSTS = (
+    "github.com", "www.github.com",
+    "api.github.com",
+    "objects.githubusercontent.com",
+    "release-assets.githubusercontent.com",
+)
+
+
+def _urlopen(url, timeout=15):
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": f"LangFixer/{APP_VERSION}"})
+    return urllib.request.urlopen(req, timeout=timeout)
+
+
+def fetch_latest_release():
+    """Returns {version, notes, url, size} for the newest release, or None."""
+    try:
+        with _urlopen(UPDATE_CHECK_URL) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return None
+
+    version = (data.get("tag_name") or "").lstrip("vV")
+    if not version:
+        return None
+
+    asset = None
+    for a in data.get("assets") or []:
+        if a.get("name") == SETUP_ASSET_NAME:
+            asset = a
+            break
+
+    return {
+        "version": version,
+        "notes": data.get("body") or "",
+        "url": (asset or {}).get("browser_download_url"),
+        "size": (asset or {}).get("size") or 0,
+    }
+
+
+def installed_location():
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, UNINSTALL_REG_PATH) as key:
+            return winreg.QueryValueEx(key, "InstallLocation")[0]
+    except Exception:
+        return None
+
+
+def running_installed_copy():
+    """True when this exe is the installed one, so replacing it in place is right."""
+    if not IS_FROZEN:
+        return False
+    loc = installed_location()
+    if not loc:
+        return False
+    try:
+        return os.path.normcase(os.path.dirname(os.path.abspath(sys.executable))) == \
+               os.path.normcase(os.path.abspath(loc))
+    except Exception:
+        return False
+
+
+def download_update(url, dest, on_progress=None, cancelled=None):
+    """Stream an update to dest. Raises on a non-GitHub host or a truncated file."""
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or parsed.hostname not in ALLOWED_DOWNLOAD_HOSTS:
+        raise ValueError(f"refusing to download from {parsed.hostname or url!r}")
+
+    tmp = dest + ".part"
+    with _urlopen(url, timeout=30) as resp:
+        total = int(resp.headers.get("Content-Length") or 0)
+        done = 0
+        with open(tmp, "wb") as f:
+            while True:
+                if cancelled and cancelled():
+                    raise RuntimeError("cancelled")
+                chunk = resp.read(256 * 1024)
+                if not chunk:
+                    break
+                f.write(chunk)
+                done += len(chunk)
+                if on_progress:
+                    on_progress(done, total)
+    if total and done < total:
+        os.remove(tmp)
+        raise IOError("download truncated")
+    if os.path.exists(dest):
+        os.remove(dest)
+    os.replace(tmp, dest)
+    return dest
+
+
+# ---------------------------------------------------------
 # Floating Button
 # ---------------------------------------------------------
 
@@ -322,59 +651,57 @@ class FloatingButton(ctk.CTkToplevel):
 # ---------------------------------------------------------
 
 class WelcomeDialog(ctk.CTkToplevel):
-    def __init__(self, master):
+    def __init__(self, master, lang="en"):
         super().__init__(master)
-        self.title(f"Welcome to {APP_NAME}")
+        self.lang = lang
+        rtl = is_rtl(lang)
+        lead, trail = ("right", "left") if rtl else ("left", "right")
+
+        self.title(tr(lang, "welcome_sub", app=APP_NAME, v=APP_VERSION))
         self.geometry("420x380")
         self.resizable(False, False)
         self.transient(master)
         self.grab_set()
         self.configure(fg_color=C["bg"])
 
-        # محتوى
         ctk.CTkLabel(
-            self, text="!مرحباً",
+            self, text=tr(lang, "welcome_title"),
             font=("Segoe UI", 28, "bold"), text_color=C["text"]
         ).pack(pady=(25, 5))
 
         ctk.CTkLabel(
-            self, text=f"Welcome to {APP_NAME} v{APP_VERSION}",
+            self, text=tr(lang, "welcome_sub", app=APP_NAME, v=APP_VERSION),
             font=("Segoe UI", 14), text_color=C["accent_l"]
         ).pack(pady=(0, 15))
 
-        # تعليمات
         steps_frame = ctk.CTkFrame(self, fg_color=C["card"], corner_radius=12)
         steps_frame.pack(padx=25, fill="x")
         steps_inner = ctk.CTkFrame(steps_frame, fg_color="transparent")
-        steps_inner.pack(padx=20, pady=16)
+        steps_inner.pack(padx=20, pady=16, fill="x")
 
-        steps = [
-            ("1", "Select any mistyped text"),
-            ("2", "Click the floating blue button"),
-            ("3", "Text converts to the right language!"),
-        ]
-        for num, text in steps:
+        for i, key in enumerate(("step1", "step2", "step3"), start=1):
             row = ctk.CTkFrame(steps_inner, fg_color="transparent")
             row.pack(fill="x", pady=4)
             ctk.CTkLabel(
-                row, text=num, width=28, height=28,
+                row, text=str(i), width=28, height=28,
                 corner_radius=14, fg_color=C["accent"],
                 font=("Segoe UI", 12, "bold"), text_color="white"
-            ).pack(side="left", padx=(0, 12))
+            ).pack(side=lead, padx=(0, 12) if not rtl else (12, 0))
             ctk.CTkLabel(
-                row, text=text,
-                font=("Segoe UI", 12), text_color=C["text2"], anchor="w"
-            ).pack(side="left", fill="x")
+                row, text=tr(lang, key),
+                font=("Segoe UI", 12), text_color=C["text2"],
+                anchor="e" if rtl else "w"
+            ).pack(side=lead, fill="x")
 
-        # اختصار
+        hk = (master.settings.get("hotkey", "ctrl+shift+f9")
+              if hasattr(master, "settings") else "ctrl+shift+f9")
         ctk.CTkLabel(
-            self, text="You can also use  Ctrl + Shift + F9  as a shortcut",
+            self, text=tr(lang, "shortcut_hint", hk=hk.upper().replace("+", " + ")),
             font=("Segoe UI", 11), text_color=C["muted"]
         ).pack(pady=(15, 0))
 
-        # زر البدء
         ctk.CTkButton(
-            self, text="Get Started", width=200, height=40,
+            self, text=tr(lang, "get_started"), width=200, height=40,
             corner_radius=10, font=("Segoe UI", 14, "bold"),
             fg_color=C["accent"], hover_color=C["accent_l"],
             command=self._close
@@ -392,9 +719,14 @@ class WelcomeDialog(ctk.CTkToplevel):
 # ---------------------------------------------------------
 
 class AboutDialog(ctk.CTkToplevel):
-    def __init__(self, master, settings):
+    def __init__(self, master, settings, lang="en", on_update=None):
         super().__init__(master)
-        self.title(f"About {APP_NAME}")
+        self.lang = lang
+        self.on_update = on_update
+        self._release = None
+        rtl = is_rtl(lang)
+        self._lead, self._trail = ("right", "left") if rtl else ("left", "right")
+        self.title(tr(lang, "about_title", app=APP_NAME))
         self.geometry("380x400")
         self.resizable(False, False)
         self.transient(master)
@@ -414,7 +746,7 @@ class AboutDialog(ctk.CTkToplevel):
         ).pack(pady=(0, 2))
 
         ctk.CTkLabel(
-            self, text=f"Version {APP_VERSION}",
+            self, text=tr(lang, "version", v=APP_VERSION),
             font=("Segoe UI", 12), text_color=C["accent_l"]
         ).pack(pady=(0, 12))
 
@@ -426,15 +758,17 @@ class AboutDialog(ctk.CTkToplevel):
 
         total = settings.get("total_conversions", 0)
         infos = [
-            ("Developer", APP_AUTHOR),
-            ("License", APP_LICENSE),
-            ("Total Conversions", f"{total:,}"),
+            (tr(lang, "developer"), APP_AUTHOR),
+            (tr(lang, "license"), APP_LICENSE),
+            (tr(lang, "total_conversions"), f"{total:,}"),
         ]
         for i, (label, value) in enumerate(infos):
             row = ctk.CTkFrame(info_inner, fg_color="transparent")
             row.pack(fill="x", pady=3)
-            ctk.CTkLabel(row, text=label, font=("Segoe UI", 12), text_color=C["muted"]).pack(side="left")
-            ctk.CTkLabel(row, text=value, font=("Segoe UI", 12, "bold"), text_color=C["text"]).pack(side="right")
+            ctk.CTkLabel(row, text=label, font=("Segoe UI", 12),
+                         text_color=C["muted"]).pack(side=self._lead)
+            ctk.CTkLabel(row, text=value, font=("Segoe UI", 12, "bold"),
+                         text_color=C["text"]).pack(side=self._trail)
             if i < len(infos) - 1:
                 ctk.CTkFrame(info_inner, fg_color=C["border"], height=1).pack(fill="x", pady=4)
 
@@ -443,19 +777,20 @@ class AboutDialog(ctk.CTkToplevel):
         btn_frame.pack(pady=18)
 
         ctk.CTkButton(
-            btn_frame, text="GitHub", width=120, height=36,
+            btn_frame, text=tr(lang, "github"), width=120, height=36,
             corner_radius=10, font=("Segoe UI", 12),
             fg_color=C["card"], hover_color=C["card_hover"],
             text_color=C["text2"], border_width=1, border_color=C["border"],
             command=lambda: webbrowser.open(APP_GITHUB)
         ).pack(side="left", padx=5)
 
-        ctk.CTkButton(
-            btn_frame, text="Check Updates", width=140, height=36,
+        self.update_btn = ctk.CTkButton(
+            btn_frame, text=tr(lang, "check_updates"), width=140, height=36,
             corner_radius=10, font=("Segoe UI", 12),
             fg_color=C["accent"], hover_color=C["accent_l"],
-            command=lambda: self._check_update()
-        ).pack(side="left", padx=5)
+            command=self._check_update
+        )
+        self.update_btn.pack(side="left", padx=5)
 
         self.update_label = ctk.CTkLabel(
             self, text="", font=("Segoe UI", 11), text_color=C["muted"]
@@ -465,32 +800,178 @@ class AboutDialog(ctk.CTkToplevel):
         self.protocol("WM_DELETE_WINDOW", self._close)
 
     def _check_update(self):
-        self.update_label.configure(text="Checking...", text_color=C["warning"])
+        if self._release and self.on_update:
+            # second click: the user has seen the version and asked to proceed
+            self._close()
+            self.on_update(self._release)
+            return
+        self.update_label.configure(text=tr(self.lang, "checking"), text_color=C["warning"])
+        self.update_btn.configure(state="disabled")
         threading.Thread(target=self._do_check, daemon=True).start()
 
     def _do_check(self):
-        try:
-            import urllib.request
-            req = urllib.request.Request(UPDATE_CHECK_URL, headers={"User-Agent": "LangFixer"})
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                data = json.loads(resp.read().decode())
-                latest = data.get("tag_name", "").lstrip("v")
-                if latest and latest != APP_VERSION:
-                    self.after(0, lambda: self.update_label.configure(
-                        text=f"New version available: v{latest}!", text_color=C["success"]
-                    ))
-                else:
-                    self.after(0, lambda: self.update_label.configure(
-                        text="You're up to date!", text_color=C["success"]
-                    ))
-        except Exception:
-            self.after(0, lambda: self.update_label.configure(
-                text="Could not check for updates", text_color=C["danger"]
-            ))
+        release = fetch_latest_release()
+        self.after(0, lambda: self._show_check_result(release))
+
+    def _show_check_result(self, release):
+        self.update_btn.configure(state="normal")
+        if not release:
+            self.update_label.configure(text=tr(self.lang, "check_failed"),
+                                        text_color=C["danger"])
+            return
+        if is_newer(release["version"], APP_VERSION):
+            self._release = release
+            self.update_label.configure(
+                text=tr(self.lang, "new_version", v=release["version"]),
+                text_color=C["success"])
+            if self.on_update:
+                self.update_btn.configure(text=tr(self.lang, "update_install"))
+        else:
+            self.update_label.configure(text=tr(self.lang, "up_to_date"),
+                                        text_color=C["success"])
 
     def _close(self):
         self.grab_release()
         self.destroy()
+
+
+# ---------------------------------------------------------
+# Update Dialog
+# ---------------------------------------------------------
+
+class UpdateDialog(ctk.CTkToplevel):
+    """Asks before downloading anything. Nothing is fetched until the user agrees."""
+
+    def __init__(self, master, release, lang, on_quit):
+        super().__init__(master)
+        self.release = release
+        self.lang = lang
+        self.on_quit = on_quit
+        self._cancelled = False
+        self._busy = False
+
+        self.title(self.t("update_title"))
+        self.geometry("420x300")
+        self.resizable(False, False)
+        self.transient(master)
+        self.grab_set()
+        self.configure(fg_color=C["bg"])
+        self.protocol("WM_DELETE_WINDOW", self._close)
+
+        anchor = "e" if is_rtl(lang) else "w"
+        just = "right" if is_rtl(lang) else "left"
+
+        ctk.CTkLabel(self, text=self.t("update_title"),
+                     font=("Segoe UI Semibold", 20),
+                     text_color=C["text"]).pack(pady=(26, 6))
+
+        ctk.CTkLabel(
+            self,
+            text=self.t("update_body", new=release["version"], cur=APP_VERSION),
+            font=("Segoe UI", 12), text_color=C["text2"], justify=just,
+        ).pack(pady=(0, 4))
+
+        self.portable = not running_installed_copy()
+        if self.portable:
+            ctk.CTkLabel(self, text=self.t("update_portable"), font=("Segoe UI", 11),
+                         text_color=C["muted"], justify=just).pack(pady=(6, 0))
+        elif release.get("size"):
+            ctk.CTkLabel(self, text=f"{release['size'] / (1024 * 1024):.1f} MB",
+                         font=("Segoe UI", 11), text_color=C["muted"]).pack(pady=(2, 0))
+
+        self.status = ctk.CTkLabel(self, text="", font=("Segoe UI", 11),
+                                   text_color=C["muted"], anchor=anchor)
+        self.status.pack(pady=(14, 4), padx=30, fill="x")
+
+        self.progress = ctk.CTkProgressBar(self, height=6, corner_radius=3,
+                                           progress_color=C["accent"],
+                                           fg_color=C["border"])
+        self.progress.set(0)
+        self.progress.pack(padx=30, fill="x")
+
+        row = ctk.CTkFrame(self, fg_color="transparent")
+        row.pack(pady=20)
+
+        self.later_btn = ctk.CTkButton(
+            row, text=self.t("update_later"), width=110, height=38, corner_radius=10,
+            font=("Segoe UI", 12), fg_color=C["card"], hover_color=C["card_hover"],
+            text_color=C["text2"], border_width=1, border_color=C["border"],
+            command=self._close)
+        self.later_btn.pack(side="left", padx=6)
+
+        self.go_btn = ctk.CTkButton(
+            row,
+            text=self.t("open_releases") if self.portable else self.t("update_install"),
+            width=170, height=38, corner_radius=10,
+            font=("Segoe UI Semibold", 13), fg_color=C["accent"],
+            hover_color=C["accent_l"], text_color="white", command=self._go)
+        self.go_btn.pack(side="left", padx=6)
+
+        if not self.portable and not release.get("url"):
+            # release published without the installer asset — nothing to install
+            self.go_btn.configure(text=self.t("open_releases"))
+            self.portable = True
+
+    def t(self, key, **kw):
+        return tr(self.lang, key, **kw)
+
+    def _close(self):
+        if self._busy:
+            return
+        self._cancelled = True
+        self.grab_release()
+        self.destroy()
+
+    def _go(self):
+        if self.portable:
+            webbrowser.open(f"{APP_GITHUB}/releases/latest")
+            self._close()
+            return
+        self._busy = True
+        self.go_btn.configure(state="disabled")
+        self.later_btn.configure(state="disabled")
+        threading.Thread(target=self._download_worker, daemon=True).start()
+
+    def _download_worker(self):
+        dest = os.path.join(os.environ.get("TEMP", os.path.expanduser("~")),
+                            SETUP_ASSET_NAME)
+        try:
+            def progress(done, total):
+                pct = int(done * 100 / total) if total else 0
+                self.after(0, lambda: self._set_progress(pct))
+
+            download_update(self.release["url"], dest, progress,
+                            cancelled=lambda: self._cancelled)
+
+            self.after(0, lambda: self.status.configure(
+                text=self.t("update_launching"), text_color=C["success"]))
+            self.after(600, lambda: self._launch(dest))
+        except Exception as e:
+            msg = str(e)
+            self.after(0, lambda: self._failed(msg))
+
+    def _set_progress(self, pct):
+        self.progress.set(pct / 100)
+        self.status.configure(text=self.t("update_downloading", pct=pct),
+                              text_color=C["text2"])
+
+    def _failed(self, msg):
+        self._busy = False
+        self.progress.set(0)
+        self.status.configure(text=self.t("update_failed", err=msg), text_color=C["danger"])
+        self.go_btn.configure(state="normal")
+        self.later_btn.configure(state="normal")
+
+    def _launch(self, setup_path):
+        try:
+            # the installer stops this app, swaps the exe, and starts it again
+            subprocess.Popen([setup_path, "--silent", "--launch"],
+                             creationflags=0x08000000)
+        except Exception as e:
+            self._failed(str(e))
+            return
+        self.grab_release()
+        self.on_quit()
 
 
 # ---------------------------------------------------------
@@ -504,6 +985,11 @@ class App(ctk.CTk):
 
         # keep the saved preference honest if the user changed it outside the app
         self.settings["start_with_windows"] = is_startup_enabled()
+
+        self.lang = self.settings.get("language", "en")
+        if self.lang not in TR:
+            self.lang = "en"
+        self._pending_release = None
 
         self.title(f"{APP_NAME}")
         self.geometry("380x730")
@@ -532,6 +1018,7 @@ class App(ctk.CTk):
         self._drag_start_x = 0
         self._drag_start_y = 0
         self._mouse_is_down = False
+        self._counter_job = None
 
         self.create_widgets()
         self.floating_btn = FloatingButton(self, self._do_convert)
@@ -555,27 +1042,78 @@ class App(ctk.CTk):
         if self.settings.get("check_updates", True):
             threading.Thread(target=self._silent_update_check, daemon=True).start()
 
+    # ── Language ──
+
+    def t(self, key, **kw):
+        return tr(self.lang, key, **kw)
+
+    @property
+    def rtl(self):
+        return is_rtl(self.lang)
+
+    def _anchor(self):
+        return "e" if self.rtl else "w"
+
+    def _lead(self):
+        """Side that reads first in the current direction."""
+        return "right" if self.rtl else "left"
+
+    def _trail(self):
+        return "left" if self.rtl else "right"
+
+    def _toggle_language(self):
+        self.lang = "ar" if self.lang == "en" else "en"
+        self.settings["language"] = self.lang
+        save_settings(self.settings)
+        self._rebuild_ui()
+
+    def _rebuild_ui(self):
+        """Language changes flip layout direction, so rebuild rather than retitle."""
+        for child in self.winfo_children():
+            if isinstance(child, ctk.CTkToplevel):
+                continue
+            child.destroy()
+        self.create_widgets()
+        self._update_floating_label()
+        if self._pending_release:
+            self._announce_update(self._pending_release)
+
+    def _update_floating_label(self):
+        try:
+            self.floating_btn.btn.configure(text="ع⇄A")
+        except Exception:
+            pass
+
+    # ── Welcome / Updates ──
+
     def _show_welcome(self):
-        WelcomeDialog(self)
+        WelcomeDialog(self, self.lang)
         self.settings["first_run"] = False
         save_settings(self.settings)
 
     def _silent_update_check(self):
-        """فحص صامت للتحديثات"""
+        """Background check on launch. Only ever reads — never downloads by itself."""
+        time.sleep(3)
+        release = fetch_latest_release()
+        if not release or not is_newer(release["version"], APP_VERSION):
+            return
+        self._pending_release = release
+        self.after(0, lambda: self._announce_update(release))
+
+    def _announce_update(self, release):
         try:
-            time.sleep(3)
-            import urllib.request
-            req = urllib.request.Request(UPDATE_CHECK_URL, headers={"User-Agent": "LangFixer"})
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                data = json.loads(resp.read().decode())
-                latest = data.get("tag_name", "").lstrip("v")
-                if latest and latest != APP_VERSION:
-                    self.after(0, lambda: self.status_label.configure(
-                        text=f"Update available: v{latest}",
-                        text_color=C["warning"]
-                    ))
+            self.status_label.configure(
+                text=self.t("update_available", v=release["version"]),
+                text_color=C["warning"],
+            )
         except Exception:
             pass
+
+    def _open_update_dialog(self, release=None):
+        release = release or self._pending_release
+        if not release:
+            return
+        UpdateDialog(self, release, self.lang, self._cleanup)
 
     def create_widgets(self):
         # ── Header ──
@@ -597,25 +1135,38 @@ class App(ctk.CTk):
             font=("Segoe UI Semibold", 20), text_color=C["text"]
         ).pack(side="left")
 
-        # About button
+        # Language + About buttons
+        self._globe_img = ctk.CTkImage(
+            light_image=make_globe_image(40, C["muted"]),
+            dark_image=make_globe_image(40, C["muted"]),
+            size=(17, 17),
+        )
+        ctk.CTkButton(
+            title_row, text="", image=self._globe_img,
+            width=28, height=28, corner_radius=14,
+            fg_color=C["border"], hover_color=C["card_hover"],
+            command=self._toggle_language,
+        ).pack(side="right", padx=(10, 0))
+
         ctk.CTkButton(
             title_row, text="?", width=28, height=28, corner_radius=14,
             font=("Segoe UI", 13, "bold"),
             fg_color=C["border"], hover_color=C["card_hover"],
             text_color=C["muted"], command=self._show_about
-        ).pack(side="right", padx=(10, 0))
+        ).pack(side="right", padx=(6, 0))
 
         hotkey_display = self.settings.get("hotkey", "ctrl+shift+f9").upper().replace("+", " + ")
         self.status_label = ctk.CTkLabel(
             header,
-            text=f"Select text  ·  {hotkey_display}",
+            text=self.t("tagline", hk=hotkey_display),
             text_color=C["accent_l"], font=("Segoe UI", 11)
         )
         self.status_label.pack(pady=(6, 0))
+        self.status_label.bind("<Button-1>", lambda e: self._open_update_dialog())
 
         # Counter
         self.counter_label = ctk.CTkLabel(
-            self, text="0 conversions",
+            self, text=self.t("conversions_many", n=0),
             font=("Segoe UI", 11), text_color=C["muted"]
         )
         self.counter_label.pack(pady=(8, 0))
@@ -627,24 +1178,24 @@ class App(ctk.CTk):
         opts = ctk.CTkFrame(opts_card, fg_color="transparent")
         opts.pack(padx=16, pady=12, fill="x")
 
-        self.switch_var = ctk.BooleanVar(value=True)
-        self._switch_row(opts, "Enable", self.switch_var, self._toggle_active)
+        self.switch_var = ctk.BooleanVar(value=self.is_active)
+        self._switch_row(opts, self.t("enable"), self.switch_var, self._toggle_active)
         self._divider(opts)
 
         self.floating_var = ctk.BooleanVar(value=self.settings.get("show_floating_button", True))
-        self._switch_row(opts, "Floating Button", self.floating_var, self._toggle_floating)
+        self._switch_row(opts, self.t("floating_button"), self.floating_var, self._toggle_floating)
         self._divider(opts)
 
         self.topmost_var = ctk.BooleanVar(value=self.settings.get("always_on_top", True))
-        self._switch_row(opts, "Always on Top", self.topmost_var, self._toggle_topmost)
+        self._switch_row(opts, self.t("always_on_top"), self.topmost_var, self._toggle_topmost)
         self._divider(opts)
 
         self.sound_var = ctk.BooleanVar(value=self.settings.get("sound_enabled", True))
-        self._switch_row(opts, "Sound Feedback", self.sound_var, self._toggle_sound)
+        self._switch_row(opts, self.t("sound_feedback"), self.sound_var, self._toggle_sound)
         self._divider(opts)
 
         self.startup_var = ctk.BooleanVar(value=self.settings.get("start_with_windows", False))
-        self._switch_row(opts, "Start with Windows", self.startup_var, self._toggle_startup)
+        self._switch_row(opts, self.t("start_with_windows"), self.startup_var, self._toggle_startup)
 
         # ── Mode Card ──
         mode_card = ctk.CTkFrame(self, fg_color=C["card"], corner_radius=14)
@@ -652,16 +1203,17 @@ class App(ctk.CTk):
         mode = ctk.CTkFrame(mode_card, fg_color="transparent")
         mode.pack(padx=16, pady=12, fill="x")
 
-        ctk.CTkLabel(mode, text="Conversion Mode", font=("Segoe UI Semibold", 13), text_color=C["text"]).pack(anchor="w", pady=(0, 6))
+        ctk.CTkLabel(mode, text=self.t("conversion_mode"), font=("Segoe UI Semibold", 13),
+                     text_color=C["text"]).pack(anchor=self._anchor(), pady=(0, 6))
 
         self.direction_var = ctk.StringVar(value=self.settings.get("direction", "auto"))
-        for label, val in [("Auto Detect", "auto"), ("Arabic  →  English", "ar_to_en"), ("English  →  Arabic", "en_to_ar")]:
+        for key, val in [("auto_detect", "auto"), ("ar_to_en", "ar_to_en"), ("en_to_ar", "en_to_ar")]:
             ctk.CTkRadioButton(
-                mode, text=label, variable=self.direction_var, value=val,
+                mode, text=self.t(key), variable=self.direction_var, value=val,
                 command=self._change_dir, font=("Segoe UI", 12),
                 text_color=C["text2"], fg_color=C["accent"],
                 hover_color=C["accent_l"], border_color=C["border"],
-            ).pack(pady=2, anchor="w", padx=4)
+            ).pack(pady=2, anchor=self._anchor(), padx=4)
 
         # ── Hotkey Card ──
         hk_card = ctk.CTkFrame(self, fg_color=C["card"], corner_radius=14)
@@ -671,9 +1223,11 @@ class App(ctk.CTk):
 
         hk_top = ctk.CTkFrame(hk, fg_color="transparent")
         hk_top.pack(fill="x", pady=(0, 6))
-        ctk.CTkLabel(hk_top, text="Keyboard Shortcut", font=("Segoe UI Semibold", 13), text_color=C["text"]).pack(side="left")
-        self.hotkey_hint = ctk.CTkLabel(hk_top, text="Click to record", font=("Segoe UI", 10), text_color=C["muted"])
-        self.hotkey_hint.pack(side="right")
+        ctk.CTkLabel(hk_top, text=self.t("keyboard_shortcut"), font=("Segoe UI Semibold", 13),
+                     text_color=C["text"]).pack(side=self._lead())
+        self.hotkey_hint = ctk.CTkLabel(hk_top, text=self.t("click_to_record"),
+                                        font=("Segoe UI", 10), text_color=C["muted"])
+        self.hotkey_hint.pack(side=self._trail())
 
         hk_display = self.settings.get("hotkey", "ctrl+shift+f9").upper().replace("+", " + ")
         self.hotkey_entry = ctk.CTkEntry(
@@ -691,39 +1245,46 @@ class App(ctk.CTk):
         bf.pack(pady=12, padx=16, fill="x")
 
         ctk.CTkButton(
-            bf, text="Hide to Tray", width=155, height=36, corner_radius=10,
+            bf, text=self.t("hide_to_tray"), width=155, height=36, corner_radius=10,
             font=("Segoe UI", 12), fg_color=C["card"], hover_color=C["card_hover"],
             text_color=C["text2"], border_width=1, border_color=C["border"],
             command=self.hide_window
-        ).pack(side="left", padx=(0, 6))
+        ).pack(side=self._lead(), padx=(0, 6) if not self.rtl else (6, 0))
 
         ctk.CTkButton(
-            bf, text="Exit", width=100, height=36, corner_radius=10,
+            bf, text=self.t("exit"), width=100, height=36, corner_radius=10,
             font=("Segoe UI", 12), fg_color=C["danger"], hover_color=C["danger_h"],
             text_color="white", command=self._full_quit
-        ).pack(side="right")
+        ).pack(side=self._trail())
 
         # ── Footer ──
-        ctk.CTkLabel(
-            self, text=f"v{APP_VERSION}  ·  Open Source  ·  MIT License",
-            font=("Segoe UI", 10), text_color=C["muted"]
-        ).pack(pady=(2, 8))
+        # One label per script run, packed in reading order. Tk transposes mixed
+        # Arabic/Latin text inside a single label, so we place the runs ourselves.
+        footer = ctk.CTkFrame(self, fg_color="transparent")
+        footer.pack(pady=(2, 8))
+        parts = TR.get(self.lang, TR["en"]).get("footer_parts", TR["en"]["footer_parts"])
+        for part in parts:
+            ctk.CTkLabel(
+                footer, text=part.format(v=APP_VERSION),
+                font=("Segoe UI", 10), text_color=C["muted"]
+            ).pack(side=self._lead(), padx=3)
 
     def _switch_row(self, parent, text, var, cmd):
         row = ctk.CTkFrame(parent, fg_color="transparent")
         row.pack(fill="x")
-        ctk.CTkLabel(row, text=text, font=("Segoe UI", 12), text_color=C["text2"]).pack(side="left")
+        ctk.CTkLabel(row, text=text, font=("Segoe UI", 12),
+                     text_color=C["text2"]).pack(side=self._lead())
         ctk.CTkSwitch(
             row, text="", command=cmd, variable=var, width=44,
             progress_color=C["accent"], button_color="white",
             button_hover_color="#E2E8F0", fg_color=C["border"],
-        ).pack(side="right")
+        ).pack(side=self._trail())
 
     def _divider(self, parent):
         ctk.CTkFrame(parent, fg_color=C["border"], height=1).pack(fill="x", pady=7)
 
     def _show_about(self):
-        AboutDialog(self, self.settings)
+        AboutDialog(self, self.settings, self.lang, self._open_update_dialog)
 
     # ── Mouse Listener ──
 
@@ -841,9 +1402,9 @@ class App(ctk.CTk):
 
         self.hotkey_entry.configure(state="normal")
         self.hotkey_entry.delete(0, "end")
-        self.hotkey_entry.insert(0, "Press keys...")
+        self.hotkey_entry.insert(0, self.t("press_keys"))
         self.hotkey_entry.configure(border_color=C["accent"], text_color=C["warning"])
-        self.hotkey_hint.configure(text="Press your shortcut", text_color=C["warning"])
+        self.hotkey_hint.configure(text=self.t("press_shortcut"), text_color=C["warning"])
 
         self._record_listener = pynput_keyboard.Listener(
             on_press=self._on_record_press, on_release=self._on_record_release
@@ -896,10 +1457,11 @@ class App(ctk.CTk):
         self.hotkey_entry.delete(0, "end")
         self.hotkey_entry.insert(0, display)
         self.hotkey_entry.configure(state="disabled", border_color=C["border"], text_color=C["accent_l"])
-        self.hotkey_hint.configure(text="Saved!", text_color=C["success"])
-        self.after(2000, lambda: self.hotkey_hint.configure(text="Click to record", text_color=C["muted"]))
+        self.hotkey_hint.configure(text=self.t("saved"), text_color=C["success"])
+        self.after(2000, lambda: self.hotkey_hint.configure(
+            text=self.t("click_to_record"), text_color=C["muted"]))
 
-        self.status_label.configure(text=f"Select text  ·  {display}")
+        self.status_label.configure(text=self.t("tagline", hk=display))
         self._restart_hotkey_listener()
 
     def _key_sort(self, key):
@@ -1040,11 +1602,8 @@ class App(ctk.CTk):
 
     def _toggle_active(self):
         self.is_active = self.switch_var.get()
-        hk = self.settings.get("hotkey", "ctrl+shift+f9").upper().replace("+", " + ")
-        if self.is_active:
-            self.status_label.configure(text=f"Select text  ·  {hk}", text_color=C["accent_l"])
-        else:
-            self.status_label.configure(text="Paused", text_color=C["danger"])
+        self._reset_status()
+        if not self.is_active:
             self.floating_btn.hide()
 
     def _toggle_topmost(self):
@@ -1064,7 +1623,7 @@ class App(ctk.CTk):
         if not v:
             self.floating_btn.hide()
         self.status_label.configure(
-            text="Floating button on" if v else "Shortcut only",
+            text=self.t("floating_on") if v else self.t("floating_off"),
             text_color=C["accent_l"] if v else C["muted"],
         )
         self.after(2500, self._reset_status)
@@ -1075,30 +1634,46 @@ class App(ctk.CTk):
             self.settings["start_with_windows"] = want
             save_settings(self.settings)
             self.status_label.configure(
-                text="Startup enabled" if want else "Startup disabled",
+                text=self.t("startup_on") if want else self.t("startup_off"),
                 text_color=C["success"] if want else C["muted"],
             )
             self.after(2500, self._reset_status)
         else:
             self.startup_var.set(not want)
-            self.status_label.configure(text="Could not update startup", text_color=C["danger"])
+            self.status_label.configure(text=self.t("startup_failed"), text_color=C["danger"])
             self.after(2500, self._reset_status)
 
     def _reset_status(self):
+        # an available update outranks the idle tagline
+        if self._pending_release:
+            self._announce_update(self._pending_release)
+            return
         hk = self.settings.get("hotkey", "ctrl+shift+f9").upper().replace("+", " + ")
         if self.is_active:
-            self.status_label.configure(text=f"Select text  ·  {hk}", text_color=C["accent_l"])
+            self.status_label.configure(text=self.t("tagline", hk=hk), text_color=C["accent_l"])
         else:
-            self.status_label.configure(text="Paused", text_color=C["danger"])
+            self.status_label.configure(text=self.t("paused"), text_color=C["danger"])
 
     def _change_dir(self):
         self.settings["direction"] = self.direction_var.get()
         save_settings(self.settings)
 
     def _update_counter(self):
+        # create_widgets() calls this again after a language rebuild, so drop any
+        # tick already queued — otherwise every switch leaves an extra loop running
+        if self._counter_job is not None:
+            try:
+                self.after_cancel(self._counter_job)
+            except Exception:
+                pass
+            self._counter_job = None
         n = self.conversion_count
-        self.counter_label.configure(text=f"{n} conversion{'s' if n != 1 else ''}")
-        self.after(1000, self._update_counter)
+        key = "conversions_one" if n == 1 else "conversions_many"
+        try:
+            self.counter_label.configure(text=self.t(key, n=n))
+        except Exception:
+            return
+        self._counter_job = self.after(1000, self._update_counter)
 
     # ── System Tray ──
 
@@ -1122,14 +1697,17 @@ class App(ctk.CTk):
         """The tray icon lives for the whole session, so the app is always reachable."""
         if self.tray_icon:
             return
+        # labels are callables so the menu follows the interface language
         menu = pystray.Menu(
-            pystray.MenuItem('Show', self._show_from_tray, default=True),
-            pystray.MenuItem('Enabled', self._tray_toggle_active,
+            pystray.MenuItem(lambda item: self.t("tray_show"),
+                             self._show_from_tray, default=True),
+            pystray.MenuItem(lambda item: self.t("tray_enabled"), self._tray_toggle_active,
                              checked=lambda item: self.is_active),
-            pystray.MenuItem('Start with Windows', self._tray_toggle_startup,
+            pystray.MenuItem(lambda item: self.t("start_with_windows"),
+                             self._tray_toggle_startup,
                              checked=lambda item: self.settings.get("start_with_windows", False)),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem('Exit', self._quit_from_tray),
+            pystray.MenuItem(lambda item: self.t("tray_exit"), self._quit_from_tray),
         )
         self.tray_icon = pystray.Icon("LangFixer", self._make_tray_img(), APP_NAME, menu)
         threading.Thread(target=self.tray_icon.run, daemon=True).start()
@@ -1191,15 +1769,32 @@ if __name__ == "__main__":
 
     if already_running():
         # a second copy would fight over the hotkey and the clipboard
+        if not activate_existing_instance():
+            try:
+                user32.MessageBoxW(
+                    None,
+                    f"{APP_NAME} is already running.\nLook for it in the system tray.",
+                    APP_NAME, 0x40,
+                )
+            except Exception:
+                pass
+        sys.exit(0)
+
+    try:
+        app = App(start_minimized=start_minimized)
+        app.mainloop()
+    except SystemExit:
+        raise
+    except Exception as exc:
+        # windowed build: without this the user gets PyInstaller's raw traceback box
+        import traceback
         try:
             user32.MessageBoxW(
                 None,
-                f"{APP_NAME} is already running.\nLook for it in the system tray.",
-                APP_NAME, 0x40,
+                f"{APP_NAME} could not start.\n\n{type(exc).__name__}: {exc}\n\n"
+                + traceback.format_exc(limit=3),
+                APP_NAME, 0x10,
             )
         except Exception:
             pass
-        sys.exit(0)
-
-    app = App(start_minimized=start_minimized)
-    app.mainloop()
+        sys.exit(1)

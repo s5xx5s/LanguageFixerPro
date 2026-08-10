@@ -24,6 +24,8 @@ Or `اثممخ` when you meant **hello**?
 - **Smart Detection**: Automatically detects if the text needs to be Arabic or English.
 - **Interactive Feedback**: Subtle sound effects and visual cues.
 - **Persistance**: Remembers your settings and window position.
+- **Arabic Interface**: One click on the globe icon switches the whole UI to Arabic, laid out right-to-left.
+- **In-App Updates**: Checks GitHub for new releases and, only if you say yes, downloads and installs them for you.
 - **Runs at Startup**: Launches with Windows, straight into the system tray.
 - **Always in the Tray**: A permanent tray icon with a quick menu — show, enable/disable, toggle startup, exit.
 - **Single Instance**: A second launch just points you at the copy already running.
@@ -117,9 +119,36 @@ Settings are automatically saved in `~/.langfixer_pro.json`. You can modify them
 | Sound Feedback | `True` | Play a beep sound on successful fix. |
 | Start with Windows | `False` | Register the app in `HKCU\...\Run` to launch minimized at logon. |
 | Hotkey | `Ctrl+Shift+F9` | Click to record your own shortcut. |
+| Language | `en` | Interface language: `en` or `ar`. Toggle with the globe icon. |
 
 *Start with Windows* is read back from the registry at every launch, so the switch
 always shows the real state even if you removed the entry through Task Manager.
+
+## Interface Language
+
+The globe icon in the header switches between English and **العربية**. Arabic is not
+just translated — the layout mirrors to right-to-left: labels move to the right,
+switches to the left, and the buttons swap sides.
+
+One implementation note, if you are reading the code: Tk has no bidirectional text
+engine, so a single label mixing Arabic and Latin comes out transposed. The footer is
+therefore built from one label per script run, packed in reading order, and version
+numbers carry a `v` prefix so they stay in Latin digits inside Arabic text.
+
+## Updates
+
+The app checks the GitHub releases API on launch. If a newer version exists it says so
+in the header — it does **not** download anything on its own.
+
+Click the notice (or **Check Updates** in the About dialog) to see the version, then
+choose **Download & Install**. Only then is the installer fetched, and only from
+GitHub's own hosts — any other host is refused. The installer then replaces the app
+and restarts it.
+
+Running the portable exe instead? The dialog points you at the releases page rather
+than installing over your portable copy.
+
+Turn the check off with `"check_updates": false` in the settings file.
 
 ## System Tray
 

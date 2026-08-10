@@ -8,16 +8,18 @@ Per-user install under %LOCALAPPDATA%\\Programs — no admin rights, no UAC prom
 """
 
 import customtkinter as ctk
+import ctypes
 import os
 import shutil
 import subprocess
 import sys
 import threading
 import time
+import traceback
 import winreg
 
 APP_NAME = "Language Fixer Pro"
-APP_VERSION = "1.4.1"
+APP_VERSION = "1.5.0"
 APP_PUBLISHER = "s5xx5s"
 APP_GITHUB = "https://github.com/s5xx5s/LanguageFixerPro"
 EXE_NAME = "LanguageFixerPro.exe"
@@ -580,5 +582,24 @@ def main():
         Installer().mainloop()
 
 
+def fatal(message):
+    """A windowed build has no console, so an uncaught error would otherwise show
+    PyInstaller's raw traceback dialog. Say something a person can act on."""
+    try:
+        ctypes.windll.user32.MessageBoxW(None, message, f"{APP_NAME} Setup", 0x10)
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception as exc:
+        fatal(
+            f"Setup could not finish.\n\n{type(exc).__name__}: {exc}\n\n"
+            "If Language Fixer Pro is running, close it from the system tray "
+            "and try again.\n\n" + traceback.format_exc(limit=3)
+        )
+        sys.exit(1)
