@@ -1,5 +1,5 @@
 """
-Language Fixer Pro v1.4.0
+Language Fixer Pro v1.4.1
 =========================
 Open Source Arabic ↔ English keyboard layout fixer.
 GitHub: https://github.com/s5xx5s/LanguageFixerPro
@@ -26,7 +26,7 @@ import webbrowser
 # ---------------------------------------------------------
 
 APP_NAME = "Language Fixer Pro"
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.4.1"
 APP_AUTHOR = "s5xx5s"
 APP_GITHUB = "https://github.com/s5xx5s/LanguageFixerPro"
 APP_LICENSE = "MIT License"

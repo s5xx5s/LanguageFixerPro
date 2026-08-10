@@ -3,7 +3,7 @@
 ; Build with:  ISCC.exe installer.iss
 
 #define MyAppName "Language Fixer Pro"
-#define MyAppVersion "1.4.0"
+#define MyAppVersion "1.4.1"
 #define MyAppPublisher "s5xx5s"
 #define MyAppURL "https://github.com/s5xx5s/LanguageFixerPro"
 #define MyAppExeName "LanguageFixerPro.exe"

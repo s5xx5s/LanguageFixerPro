@@ -13,10 +13,11 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import winreg
 
 APP_NAME = "Language Fixer Pro"
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.4.1"
 APP_PUBLISHER = "s5xx5s"
 APP_GITHUB = "https://github.com/s5xx5s/LanguageFixerPro"
 EXE_NAME = "LanguageFixerPro.exe"
@@ -149,8 +150,35 @@ def unregister_uninstall():
         pass
 
 
-def stop_running_app():
+def app_is_running():
+    try:
+        out = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {EXE_NAME}", "/NH"],
+                             capture_output=True, text=True, creationflags=NO_WINDOW)
+        return EXE_NAME.lower() in (out.stdout or "").lower()
+    except Exception:
+        return False
+
+
+def stop_running_app(timeout=10.0):
+    """taskkill returns before Windows releases the exe lock — wait for the real exit."""
     run_hidden(["taskkill", "/F", "/IM", EXE_NAME])
+    deadline = time.time() + timeout
+    while time.time() < deadline and app_is_running():
+        time.sleep(0.25)
+
+
+def copy_with_retry(src, dst, attempts=12, delay=0.4):
+    """Even after the process is gone the file can stay locked for a moment
+    (antivirus scan, lazy handle release). Retry instead of failing the install."""
+    last = None
+    for _ in range(attempts):
+        try:
+            shutil.copy2(src, dst)
+            return
+        except PermissionError as e:
+            last = e
+            time.sleep(delay)
+    raise last
 
 
 def installed_dir_from_registry():
@@ -339,10 +367,10 @@ class Installer(BaseWindow):
             os.makedirs(target, exist_ok=True)
 
             self._report("Copying application files...", 0.45)
-            shutil.copy2(src, os.path.join(target, EXE_NAME))
+            copy_with_retry(src, os.path.join(target, EXE_NAME))
             if getattr(sys, "frozen", False):
                 # this same binary doubles as the uninstaller
-                shutil.copy2(sys.executable, os.path.join(target, UNINST_NAME))
+                copy_with_retry(sys.executable, os.path.join(target, UNINST_NAME))
 
             exe_path = os.path.join(target, EXE_NAME)
 
@@ -486,9 +514,13 @@ def silent_install(target=None, launch=False):
     stop_running_app()
     os.makedirs(target, exist_ok=True)
     exe_path = os.path.join(target, EXE_NAME)
-    shutil.copy2(src, exe_path)
-    if getattr(sys, "frozen", False):
-        shutil.copy2(sys.executable, os.path.join(target, UNINST_NAME))
+    try:
+        copy_with_retry(src, exe_path)
+        if getattr(sys, "frozen", False):
+            copy_with_retry(sys.executable, os.path.join(target, UNINST_NAME))
+    except OSError as e:
+        print(f"ERROR: could not write to {target}: {e}")
+        return 1
     create_shortcut(os.path.join(start_menu_dir(), f"{APP_NAME}.lnk"), exe_path)
     create_shortcut(os.path.join(desktop_dir(), f"{APP_NAME}.lnk"), exe_path)
     set_startup(True, exe_path)
