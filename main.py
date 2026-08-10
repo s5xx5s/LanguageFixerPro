@@ -1,5 +1,5 @@
 """
-Language Fixer Pro v1.0.0
+Language Fixer Pro v1.3.0
 =========================
 Open Source Arabic ↔ English keyboard layout fixer.
 GitHub: https://github.com/s5xx5s/LanguageFixerPro
@@ -26,17 +26,97 @@ import webbrowser
 # ---------------------------------------------------------
 
 APP_NAME = "Language Fixer Pro"
-APP_VERSION = "1.0.0"
-APP_AUTHOR = "Your Name"
+APP_VERSION = "1.3.0"
+APP_AUTHOR = "s5xx5s"
 APP_GITHUB = "https://github.com/s5xx5s/LanguageFixerPro"
 APP_LICENSE = "MIT License"
 UPDATE_CHECK_URL = "https://api.github.com/repos/s5xx5s/LanguageFixerPro/releases/latest"
+
+APP_ID = "s5xx5s.LanguageFixerPro"          # taskbar grouping identity
+MUTEX_NAME = "Global\\LanguageFixerPro_SingleInstance"
 
 # ---------------------------------------------------------
 # Windows API
 # ---------------------------------------------------------
 
 user32 = ctypes.windll.user32
+kernel32 = ctypes.windll.kernel32
+
+IS_FROZEN = getattr(sys, "frozen", False)
+
+
+def resource_path(name):
+    """Resolve a bundled resource, both from source and from a PyInstaller build."""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, name)
+
+
+def app_icon_path():
+    p = resource_path("app_icon.ico")
+    return p if os.path.exists(p) else None
+
+
+def set_app_user_model_id():
+    """Give the app its own taskbar / tray identity instead of inheriting python.exe."""
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
+    except Exception:
+        pass
+
+
+def already_running():
+    """True when another copy already holds the single-instance mutex."""
+    ERROR_ALREADY_EXISTS = 183
+    try:
+        kernel32.CreateMutexW(None, False, MUTEX_NAME)
+        return kernel32.GetLastError() == ERROR_ALREADY_EXISTS
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------
+# Run at Windows startup (HKCU — no admin rights needed)
+# ---------------------------------------------------------
+
+STARTUP_REG_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
+STARTUP_REG_NAME = "LanguageFixerPro"
+
+
+def _startup_command():
+    if IS_FROZEN:
+        return f'"{sys.executable}" --minimized'
+    script = os.path.abspath(__file__)
+    return f'"{sys.executable}" "{script}" --minimized'
+
+
+def is_startup_enabled():
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_REG_PATH) as key:
+            value, _ = winreg.QueryValueEx(key, STARTUP_REG_NAME)
+            return bool(value)
+    except Exception:
+        return False
+
+
+def set_startup_enabled(enabled):
+    """Register/unregister the app in HKCU Run. Returns True on success."""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_REG_PATH, 0,
+                            winreg.KEY_SET_VALUE) as key:
+            if enabled:
+                winreg.SetValueEx(key, STARTUP_REG_NAME, 0, winreg.REG_SZ,
+                                  _startup_command())
+            else:
+                try:
+                    winreg.DeleteValue(key, STARTUP_REG_NAME)
+                except FileNotFoundError:
+                    pass
+        return True
+    except Exception:
+        return False
+
 
 class POINT(ctypes.Structure):
     _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
@@ -80,6 +160,8 @@ DEFAULT_SETTINGS = {
     "first_run": True,
     "check_updates": True,
     "total_conversions": 0,
+    "start_with_windows": False,
+    "close_to_tray": True,
 }
 
 def load_settings():
@@ -415,13 +497,23 @@ class AboutDialog(ctk.CTkToplevel):
 # ---------------------------------------------------------
 
 class App(ctk.CTk):
-    def __init__(self):
+    def __init__(self, start_minimized=False):
         super().__init__()
         self.settings = load_settings()
 
+        # keep the saved preference honest if the user changed it outside the app
+        self.settings["start_with_windows"] = is_startup_enabled()
+
         self.title(f"{APP_NAME}")
-        self.geometry("380x680")
+        self.geometry("380x690")
         self.resizable(False, False)
+
+        ico = app_icon_path()
+        if ico:
+            try:
+                self.iconbitmap(ico)
+            except Exception:
+                pass
 
         ctk.set_appearance_mode("Dark")
         self.configure(fg_color=C["bg"])
@@ -448,8 +540,14 @@ class App(ctk.CTk):
         self._start_keyboard_listener()
         self._start_hotkey_listener()
 
-        # رسالة الترحيب أول مرة
-        if self.settings.get("first_run", True):
+        # أيقونة شريط المهام تعمل دائماً في الخلفية
+        self._start_tray()
+
+        # التشغيل مع بدء ويندوز: ابدأ مصغّراً في شريط المهام
+        if start_minimized:
+            self.after(0, self.withdraw)
+        elif self.settings.get("first_run", True):
+            # رسالة الترحيب أول مرة
             self.after(500, self._show_welcome)
 
         # فحص التحديثات عند التشغيل
@@ -538,6 +636,10 @@ class App(ctk.CTk):
 
         self.sound_var = ctk.BooleanVar(value=self.settings.get("sound_enabled", True))
         self._switch_row(opts, "Sound Feedback", self.sound_var, self._toggle_sound)
+        self._divider(opts)
+
+        self.startup_var = ctk.BooleanVar(value=self.settings.get("start_with_windows", False))
+        self._switch_row(opts, "Start with Windows", self.startup_var, self._toggle_startup)
 
         # ── Mode Card ──
         mode_card = ctk.CTkFrame(self, fg_color=C["card"], corner_radius=14)
@@ -949,6 +1051,28 @@ class App(ctk.CTk):
         self.settings["sound_enabled"] = self.sound_var.get()
         save_settings(self.settings)
 
+    def _toggle_startup(self):
+        want = self.startup_var.get()
+        if set_startup_enabled(want):
+            self.settings["start_with_windows"] = want
+            save_settings(self.settings)
+            self.status_label.configure(
+                text="Startup enabled" if want else "Startup disabled",
+                text_color=C["success"] if want else C["muted"],
+            )
+            self.after(2500, self._reset_status)
+        else:
+            self.startup_var.set(not want)
+            self.status_label.configure(text="Could not update startup", text_color=C["danger"])
+            self.after(2500, self._reset_status)
+
+    def _reset_status(self):
+        hk = self.settings.get("hotkey", "ctrl+shift+f9").upper().replace("+", " + ")
+        if self.is_active:
+            self.status_label.configure(text=f"Select text  ·  {hk}", text_color=C["accent_l"])
+        else:
+            self.status_label.configure(text="Paused", text_color=C["danger"])
+
     def _change_dir(self):
         self.settings["direction"] = self.direction_var.get()
         save_settings(self.settings)
@@ -961,37 +1085,71 @@ class App(ctk.CTk):
     # ── System Tray ──
 
     def _make_tray_img(self):
+        """Prefer the bundled multi-size icon so the tray stays crisp on HiDPI."""
+        ico = app_icon_path()
+        if ico:
+            try:
+                img = Image.open(ico)
+                img.load()
+                return img.convert("RGBA")
+            except Exception:
+                pass
         img = Image.new('RGBA', (64, 64), (0, 0, 0, 0))
         d = ImageDraw.Draw(img)
         d.rounded_rectangle((2, 2, 62, 62), radius=14, fill=C["accent"])
         d.text((10, 18), "ع/A", fill="white")
         return img
 
-    def hide_window(self):
-        self.withdraw()
+    def _start_tray(self):
+        """The tray icon lives for the whole session, so the app is always reachable."""
         if self.tray_icon:
-            try: self.tray_icon.stop()
-            except: pass
-        img = self._make_tray_img()
+            return
         menu = pystray.Menu(
-            pystray.MenuItem('Show', self._show_from_tray),
-            pystray.MenuItem('Exit', self._quit_from_tray)
+            pystray.MenuItem('Show', self._show_from_tray, default=True),
+            pystray.MenuItem('Enabled', self._tray_toggle_active,
+                             checked=lambda item: self.is_active),
+            pystray.MenuItem('Start with Windows', self._tray_toggle_startup,
+                             checked=lambda item: self.settings.get("start_with_windows", False)),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem('Exit', self._quit_from_tray),
         )
-        self.tray_icon = pystray.Icon("LangFixer", img, APP_NAME, menu)
+        self.tray_icon = pystray.Icon("LangFixer", self._make_tray_img(), APP_NAME, menu)
         threading.Thread(target=self.tray_icon.run, daemon=True).start()
 
+    def hide_window(self):
+        """Close button and 'Hide to Tray' both park the app in the system tray."""
+        self.withdraw()
+        self._start_tray()
+
     def _show_from_tray(self, icon=None, item=None):
+        self.after(0, self._restore_window)
+
+    def _restore_window(self):
+        self.deiconify()
+        self.lift()
+        self.focus_force()
+
+    def _tray_toggle_active(self, icon=None, item=None):
+        self.after(0, self._tray_toggle_active_ui)
+
+    def _tray_toggle_active_ui(self):
+        self.switch_var.set(not self.switch_var.get())
+        self._toggle_active()
         if self.tray_icon:
-            try: self.tray_icon.stop()
-            except: pass
-            self.tray_icon = None
-        self.after(0, self.deiconify)
+            self.tray_icon.update_menu()
+
+    def _tray_toggle_startup(self, icon=None, item=None):
+        self.after(0, self._tray_toggle_startup_ui)
+
+    def _tray_toggle_startup_ui(self):
+        self.startup_var.set(not self.startup_var.get())
+        self._toggle_startup()
+        if self.tray_icon:
+            self.tray_icon.update_menu()
 
     def _quit_from_tray(self, icon=None, item=None):
-        if self.tray_icon:
-            try: self.tray_icon.stop()
-            except: pass
-        self._cleanup()
+        # marshal back to the Tk thread — destroying widgets off-thread deadlocks
+        self.after(0, self._cleanup)
 
     def _full_quit(self):
         self._cleanup()
@@ -1002,10 +1160,28 @@ class App(ctk.CTk):
         if self.tray_icon:
             try: self.tray_icon.stop()
             except: pass
+            self.tray_icon = None
         self.destroy()
         sys.exit()
 
 
 if __name__ == "__main__":
-    app = App()
+    start_minimized = any(a in ("--minimized", "--startup", "/minimized")
+                          for a in sys.argv[1:])
+
+    set_app_user_model_id()
+
+    if already_running():
+        # a second copy would fight over the hotkey and the clipboard
+        try:
+            user32.MessageBoxW(
+                None,
+                f"{APP_NAME} is already running.\nLook for it in the system tray.",
+                APP_NAME, 0x40,
+            )
+        except Exception:
+            pass
+        sys.exit(0)
+
+    app = App(start_minimized=start_minimized)
     app.mainloop()

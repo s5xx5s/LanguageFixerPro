@@ -1,75 +1,151 @@
 """
 Build Script - Language Fixer Pro
 ==================================
-pip install pyinstaller
-python build_exe.py
+    pip install -r requirements.txt pyinstaller
+    python build_exe.py
+
+Produces in dist/:
+    LanguageFixerPro.exe        portable app
+    LanguageFixerPro-Setup.exe  installer (bundles the app + uninstaller)
+
+Flags:
+    --app-only    build just the portable app
+    --no-inno     skip the Inno Setup build even if ISCC is on PATH
 """
 
-import subprocess, sys, os
-from PIL import Image, ImageDraw, ImageFont
+import os
+import shutil
+import subprocess
+import sys
 
-def create_icon():
-    print("[1/3] Creating icon...")
-    sizes = [16, 32, 48, 64, 128, 256]
-    images = []
-    for size in sizes:
-        img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
-        d = ImageDraw.Draw(img)
-        m = max(1, size // 16)
-        d.rounded_rectangle((m, m, size-m, size-m), radius=size//4, fill="#1A6FD4")
-        try:
-            font = ImageFont.truetype("segoeui.ttf", size // 3)
-        except:
-            font = ImageFont.load_default()
-        text = "ع A"
-        bbox = d.textbbox((0,0), text, font=font)
-        d.text(((size-bbox[2]+bbox[0])//2, (size-bbox[3]+bbox[1])//2), text, fill="white", font=font)
-        images.append(img)
-    path = os.path.join(os.path.dirname(__file__), "app_icon.ico")
-    images[0].save(path, format='ICO', sizes=[(s,s) for s in sizes], append_images=images[1:])
-    return path
+ROOT = os.path.dirname(os.path.abspath(__file__))
+DIST = os.path.join(ROOT, "dist")
+BUILD = os.path.join(ROOT, "build")
+APP_EXE = os.path.join(DIST, "LanguageFixerPro.exe")
+SETUP_EXE = os.path.join(DIST, "LanguageFixerPro-Setup.exe")
 
-def build(icon):
-    print("[2/3] Building EXE...")
+INNO_CANDIDATES = [
+    r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+    r"C:\Program Files\Inno Setup 6\ISCC.exe",
+]
+
+
+def ensure_pyinstaller():
+    try:
+        import PyInstaller  # noqa: F401
+    except ImportError:
+        print("  installing pyinstaller...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
+
+
+def ctk_data_arg():
+    """customtkinter ships .json themes and fonts PyInstaller does not auto-collect."""
     import customtkinter
-    ctk_path = os.path.dirname(customtkinter.__file__)
-    main = os.path.join(os.path.dirname(__file__), "main.py")
+    return f"--add-data={os.path.dirname(customtkinter.__file__)};customtkinter"
+
+
+HIDDEN_IMPORTS = [
+    "pynput", "pynput.mouse", "pynput.mouse._win32",
+    "pynput.keyboard", "pynput.keyboard._win32",
+    "pyperclip", "pystray", "pystray._win32",
+    "PIL", "PIL.Image", "PIL.ImageDraw",
+]
+
+
+def run_pyinstaller(name, entry, icon, extra=()):
     cmd = [
         sys.executable, "-m", "PyInstaller",
-        "--onefile", "--windowed", "--noconfirm",
-        f"--icon={icon}", "--name=LanguageFixerPro",
-        f"--add-data={ctk_path};customtkinter",
-        "--hidden-import=pynput", "--hidden-import=pynput.mouse",
-        "--hidden-import=pynput.mouse._win32",
-        "--hidden-import=pynput.keyboard", "--hidden-import=pynput.keyboard._win32",
-        "--hidden-import=pyperclip", "--hidden-import=pystray",
-        "--hidden-import=pystray._win32", "--hidden-import=PIL",
-        "--hidden-import=ctypes", "--hidden-import=winsound",
-        main,
+        "--onefile", "--windowed", "--noconfirm", "--clean",
+        f"--icon={icon}", f"--name={name}",
+        f"--distpath={DIST}", f"--workpath={BUILD}",
+        f"--specpath={BUILD}",
+        ctk_data_arg(),
+        f"--add-data={icon};.",
     ]
-    subprocess.run(cmd)
+    for h in HIDDEN_IMPORTS:
+        cmd.append(f"--hidden-import={h}")
+    cmd.extend(extra)
+    cmd.append(entry)
+
+    result = subprocess.run(cmd)
+    if result.returncode != 0:
+        raise SystemExit(f"  ERROR: PyInstaller failed for {name}.")
+
+
+def build_app(icon):
+    print("[2/4] Building portable app...")
+    run_pyinstaller("LanguageFixerPro", os.path.join(ROOT, "main.py"), icon)
+
+
+def build_installer(icon):
+    print("[3/4] Building installer...")
+    if not os.path.exists(APP_EXE):
+        raise SystemExit("  ERROR: dist/LanguageFixerPro.exe missing — build the app first.")
+    # PyInstaller refuses to overwrite a file it is also bundling, so stage the
+    # payload outside dist/
+    payload_dir = os.path.join(BUILD, "payload")
+    os.makedirs(payload_dir, exist_ok=True)
+    staged = os.path.join(payload_dir, "LanguageFixerPro.exe")
+    shutil.copy2(APP_EXE, staged)
+
+    run_pyinstaller(
+        "LanguageFixerPro-Setup", os.path.join(ROOT, "installer.py"), icon,
+        extra=[f"--add-data={staged};payload"],
+    )
+
+
+def build_inno(icon):
+    iscc = next((p for p in INNO_CANDIDATES if os.path.exists(p)), shutil.which("ISCC"))
+    if not iscc:
+        print("[4/4] Inno Setup not found — skipping (optional).")
+        return
+    print("[4/4] Building Inno Setup installer...")
+    subprocess.run([iscc, os.path.join(ROOT, "installer.iss")], cwd=ROOT)
+
 
 def cleanup():
-    print("[3/3] Cleaning up...")
-    import shutil
-    for f in ["build", "__pycache__"]:
-        if os.path.exists(f): shutil.rmtree(f, ignore_errors=True)
-    if os.path.exists("LanguageFixerPro.spec"): os.remove("LanguageFixerPro.spec")
+    shutil.rmtree(BUILD, ignore_errors=True)
+    shutil.rmtree(os.path.join(ROOT, "__pycache__"), ignore_errors=True)
+
+
+def report(path, label):
+    if os.path.exists(path):
+        mb = os.path.getsize(path) / (1024 * 1024)
+        print(f"  OK  {label:<28} {os.path.relpath(path, ROOT)}  ({mb:.1f} MB)")
+        return True
+    print(f"  --  {label:<28} not produced")
+    return False
+
+
+def main():
+    args = sys.argv[1:]
+    print("=" * 58)
+    print("  Language Fixer Pro - Build")
+    print("=" * 58)
+
+    ensure_pyinstaller()
+
+    print("[1/4] Creating icon...")
+    from make_icon import create_icon
+    icon = create_icon()
+
+    build_app(icon)
+    if "--app-only" not in args:
+        build_installer(icon)
+        if "--no-inno" not in args:
+            build_inno(icon)
+
+    cleanup()
+
+    print("\n" + "-" * 58)
+    ok = report(APP_EXE, "Portable app")
+    if "--app-only" not in args:
+        ok &= report(SETUP_EXE, "Installer")
+        report(os.path.join(DIST, "LanguageFixerPro-Setup-Inno.exe"), "Installer (Inno)")
+    print("-" * 58)
+    if not ok:
+        sys.exit(1)
+
 
 if __name__ == "__main__":
-    print("=" * 45)
-    print("  Language Fixer Pro - EXE Builder")
-    print("=" * 45)
-    try:
-        import PyInstaller
-    except ImportError:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
-    icon = create_icon()
-    build(icon)
-    cleanup()
-    exe = os.path.join("dist", "LanguageFixerPro.exe")
-    if os.path.exists(exe):
-        mb = os.path.getsize(exe) / (1024*1024)
-        print(f"\n  SUCCESS! → dist/LanguageFixerPro.exe ({mb:.1f} MB)")
-    else:
-        print("\n  ERROR: Check output above.")
+    main()

@@ -24,7 +24,10 @@ Or `اثممخ` when you meant **hello**?
 - **Smart Detection**: Automatically detects if the text needs to be Arabic or English.
 - **Interactive Feedback**: Subtle sound effects and visual cues.
 - **Persistance**: Remembers your settings and window position.
-- **Tray Icon**: Minimize to the system tray to keep your taskbar clean.
+- **Runs at Startup**: Launches with Windows, straight into the system tray.
+- **Always in the Tray**: A permanent tray icon with a quick menu — show, enable/disable, toggle startup, exit.
+- **Single Instance**: A second launch just points you at the copy already running.
+- **Real Installer**: `LanguageFixerPro-Setup.exe` installs per-user (no admin prompt) and registers a proper uninstaller.
 
 ## Built with Vibe Coding
 
@@ -33,24 +36,56 @@ We leveraged the flow state of AI-assisted development to bring this idea to lif
 
 ## Installation
 
-### Option 1: Portable EXE (Recommended)
+### Option 1: Installer (Recommended)
 1. Go to the [Releases](../../releases) page.
-2. Download `LanguageFixerPro.exe`.
-3. Run it directly — no installation required.
+2. Download `LanguageFixerPro-Setup.exe` and run it.
+3. Pick your options and click **Install**.
 
-### Option 2: Run from Source
+It installs to `%LOCALAPPDATA%\Programs\LanguageFixerPro` — a per-user install, so
+Windows never shows a UAC prompt. Setup can create Desktop and Start Menu shortcuts,
+register the app to start with Windows, and launch it when it's done.
+
+Uninstall from **Settings → Apps → Installed apps**, or run `uninstall.exe` from the
+install folder.
+
+For scripted deployment:
+
+```bash
+LanguageFixerPro-Setup.exe --silent
+```
+
+### Option 2: Portable EXE
+Download `LanguageFixerPro.exe` from [Releases](../../releases) and run it directly —
+nothing is installed, nothing is written to the registry unless you turn on
+*Start with Windows* yourself.
+
+### Option 3: Run from Source
 If you are a developer or want to vibe with the code:
 
 ```bash
-# Clone the repo
 git clone https://github.com/s5xx5s/LanguageFixerPro.git
 cd LanguageFixerPro
+```
 
-# Install dependencies
-pip install -r requirements.txt
+Use a virtual environment — on machines with several Python installs, a bare
+`pip install` often lands in a *different* interpreter than the one `python` resolves
+to, which is what produces `ModuleNotFoundError: No module named 'customtkinter'`
+right after a successful install:
 
-# Run
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+python -m pip install -r requirements.txt
 python main.py
+```
+
+Always prefer `python -m pip` over a bare `pip` — it guarantees the packages land in
+the interpreter you are about to run.
+
+Start hidden in the tray (this is what the startup entry uses):
+
+```bash
+python main.py --minimized
 ```
 
 ## How to Use
@@ -77,16 +112,57 @@ Settings are automatically saved in `~/.langfixer_pro.json`. You can modify them
 | Show Floating Button | `True` | Show the popup button on text selection. |
 | Always on Top | `True` | Keep the settings window above others. |
 | Sound Feedback | `True` | Play a beep sound on successful fix. |
+| Start with Windows | `False` | Register the app in `HKCU\...\Run` to launch minimized at logon. |
 | Hotkey | `Ctrl+Shift+F9` | Click to record your own shortcut. |
 
-## Build EXE
+*Start with Windows* is read back from the registry at every launch, so the switch
+always shows the real state even if you removed the entry through Task Manager.
 
-To build your own executable:
+## System Tray
+
+The tray icon stays alive for the whole session. Right-click it for a menu:
+
+| Item | Action |
+|------|--------|
+| Show | Bring the settings window back |
+| Enabled | Pause or resume conversion without quitting |
+| Start with Windows | Toggle the startup entry |
+| Exit | Quit completely |
+
+Double-clicking the icon shows the window. Closing the window with **X** or
+**Hide to Tray** parks the app in the tray rather than quitting it.
+
+## Build from Source
 
 ```bash
-pip install pyinstaller
-pyinstaller --noconfirm --onefile --windowed --name "LanguageFixerPro" --icon "icon.ico" main.py
+python -m pip install -r requirements.txt pyinstaller
+python build_exe.py
 ```
+
+This produces both artifacts in `dist/`:
+
+| File | What it is |
+|------|-----------|
+| `LanguageFixerPro.exe` | Portable app (~19 MB) |
+| `LanguageFixerPro-Setup.exe` | Installer with the app bundled inside (~38 MB) |
+
+Useful flags:
+
+```bash
+python build_exe.py --app-only
+```
+
+If [Inno Setup 6](https://jrsoftware.org/isdl.php) is installed, `build_exe.py` also
+compiles `installer.iss` into `LanguageFixerPro-Setup-Inno.exe`. It is optional — the
+build skips it silently when Inno Setup is not present.
+
+| Script | Purpose |
+|--------|---------|
+| `main.py` | The application |
+| `installer.py` | GUI installer / uninstaller (also builds to an exe) |
+| `installer.iss` | Inno Setup script (optional alternative installer) |
+| `make_icon.py` | Generates `app_icon.ico`, with a simplified mark at 16/24px |
+| `build_exe.py` | Builds everything |
 
 ## Contributing
 
