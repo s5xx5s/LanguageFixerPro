@@ -47,7 +47,7 @@ def ctk_data_arg():
 HIDDEN_IMPORTS = [
     "pynput", "pynput.mouse", "pynput.mouse._win32",
     "pynput.keyboard", "pynput.keyboard._win32",
-    "pyperclip", "pystray", "pystray._win32",
+    "pystray", "pystray._win32",
     "PIL", "PIL.Image", "PIL.ImageDraw",
 ]
 
@@ -100,7 +100,9 @@ def build_inno(icon):
         print("[4/4] Inno Setup not found — skipping (optional).")
         return
     print("[4/4] Building Inno Setup installer...")
-    subprocess.run([iscc, os.path.join(ROOT, "installer.iss")], cwd=ROOT)
+    from version import APP_VERSION
+    subprocess.run([iscc, f"/DMyAppVersion={APP_VERSION}",
+                    os.path.join(ROOT, "installer.iss")], cwd=ROOT)
 
 
 def cleanup():

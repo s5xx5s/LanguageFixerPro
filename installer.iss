@@ -3,7 +3,10 @@
 ; Build with:  ISCC.exe installer.iss
 
 #define MyAppName "Language Fixer Pro"
-#define MyAppVersion "1.5.0"
+; build_exe.py passes /DMyAppVersion from version.py; the fallback is for running ISCC by hand
+#ifndef MyAppVersion
+  #define MyAppVersion "1.5.0"
+#endif
 #define MyAppPublisher "s5xx5s"
 #define MyAppURL "https://github.com/s5xx5s/LanguageFixerPro"
 #define MyAppExeName "LanguageFixerPro.exe"

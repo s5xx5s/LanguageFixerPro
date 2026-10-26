@@ -1,6 +1,6 @@
 """
-Language Fixer Pro v1.5.0
-=========================
+Language Fixer Pro
+==================
 Open Source Arabic ↔ English keyboard layout fixer.
 GitHub: https://github.com/s5xx5s/LanguageFixerPro
 
@@ -8,7 +8,6 @@ License: MIT
 """
 
 import customtkinter as ctk
-import pyperclip
 import pystray
 from pynput import mouse as pynput_mouse
 from pynput import keyboard as pynput_keyboard
@@ -22,12 +21,14 @@ import ctypes
 import subprocess
 import webbrowser
 
+from converter import convert_text
+
 # ---------------------------------------------------------
 # App Info
 # ---------------------------------------------------------
 
 APP_NAME = "Language Fixer Pro"
-APP_VERSION = "1.5.0"
+from version import APP_VERSION
 APP_AUTHOR = "s5xx5s"
 APP_GITHUB = "https://github.com/s5xx5s/LanguageFixerPro"
 APP_LICENSE = "MIT License"
@@ -173,6 +174,267 @@ def beep_sound():
     except Exception:
         pass
 
+
+def wait_for_modifiers_released(timeout=1.5):
+    """Block until Ctrl/Shift/Alt/Win are physically up.
+
+    The hotkey fires while its modifiers are still held, so a Ctrl+X sent right
+    away would reach the app as Ctrl+Shift+X (in VS Code: the Extensions view)."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not any(user32.GetAsyncKeyState(vk) & 0x8000
+                   for vk in (0x10, 0x11, 0x12, 0x5B, 0x5C)):
+            return True
+        time.sleep(0.02)
+    return False
+
+
+# ---------------------------------------------------------
+# Where the user is working
+# ---------------------------------------------------------
+
+# In a terminal Ctrl+C is "interrupt", not "copy", whenever nothing is selected,
+# and pasting never replaces a selection — so the app keeps its hands off them.
+TERMINAL_WINDOW_CLASSES = {
+    "ConsoleWindowClass", "CASCADIA_HOSTING_WINDOW_CLASS", "mintty",
+    "VirtualConsoleClass", "PuTTY", "KiTTY", "org.wezfurlong.wezterm",
+}
+TERMINAL_EXES = {
+    "windowsterminal.exe", "openconsole.exe", "conhost.exe", "cmd.exe",
+    "powershell.exe", "pwsh.exe", "mintty.exe", "conemu.exe", "conemu64.exe",
+    "putty.exe", "kitty.exe", "alacritty.exe", "wezterm-gui.exe", "tabby.exe",
+    "hyper.exe",
+}
+
+_wu32 = ctypes.WinDLL("user32", use_last_error=True)
+_wk32 = ctypes.WinDLL("kernel32", use_last_error=True)
+_wu32.GetForegroundWindow.restype = ctypes.c_void_p
+_wu32.GetClassNameW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
+_wu32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+_wu32.WindowFromPoint.argtypes = [POINT]
+_wu32.WindowFromPoint.restype = ctypes.c_void_p
+_wu32.SendMessageTimeoutW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t,
+                                      ctypes.c_ssize_t, ctypes.c_uint, ctypes.c_uint,
+                                      ctypes.POINTER(ctypes.c_ssize_t)]
+_wu32.SendMessageTimeoutW.restype = ctypes.c_ssize_t
+_wk32.OpenProcess.restype = ctypes.c_void_p
+_wk32.QueryFullProcessImageNameW.argtypes = [ctypes.c_void_p, ctypes.c_ulong,
+                                             ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_ulong)]
+_wk32.CloseHandle.argtypes = [ctypes.c_void_p]
+
+
+def _process_exe(hwnd):
+    pid = ctypes.c_ulong()
+    _wu32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    h = _wk32.OpenProcess(0x1000, False, pid.value)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not h:
+        return ""
+    try:
+        buf = ctypes.create_unicode_buffer(520)
+        size = ctypes.c_ulong(len(buf))
+        if _wk32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+            return os.path.basename(buf.value).lower()
+        return ""
+    finally:
+        _wk32.CloseHandle(h)
+
+
+def foreground_is_terminal():
+    try:
+        hwnd = _wu32.GetForegroundWindow()
+        if not hwnd:
+            return False
+        cls = ctypes.create_unicode_buffer(256)
+        _wu32.GetClassNameW(hwnd, cls, len(cls))
+        return cls.value in TERMINAL_WINDOW_CLASSES or _process_exe(hwnd) in TERMINAL_EXES
+    except Exception:
+        return False
+
+
+def point_in_client_area(x, y):
+    """False when (x, y) is a title bar, border or scrollbar — a drag there moves
+    or resizes a window, it does not select text."""
+    HTCLIENT, HTTRANSPARENT = 1, -1
+    try:
+        hwnd = _wu32.WindowFromPoint(POINT(x, y))
+        if not hwnd:
+            return True
+        result = ctypes.c_ssize_t(0)
+        lparam = ((y & 0xFFFF) << 16) | (x & 0xFFFF)
+        ok = _wu32.SendMessageTimeoutW(hwnd, 0x0084, 0, lparam,  # WM_NCHITTEST
+                                       0x0002, 50, ctypes.byref(result))  # SMTO_ABORTIFHUNG
+        if not ok:
+            return True
+        return result.value in (HTCLIENT, HTTRANSPARENT)
+    except Exception:
+        return True
+
+
+# ---------------------------------------------------------
+# Clipboard
+# ---------------------------------------------------------
+# pyperclip only sees text: saving and restoring through it wipes an image or
+# copied files sitting on the clipboard. These helpers keep every format that can
+# be copied, and mark what the app writes so it stays out of Win+V history.
+
+CF_UNICODETEXT = 13
+CF_ENHMETAFILE = 14
+# formats held as GDI or private handles rather than HGLOBAL memory. Copying their
+# bytes would leave a dangling handle; CF_BITMAP is re-synthesized from CF_DIB.
+_HANDLE_FORMATS = {2, 3, 9, 0x80, 0x82, 0x83, 0x8E}
+
+_cu32 = ctypes.WinDLL("user32", use_last_error=True)
+_ck32 = ctypes.WinDLL("kernel32", use_last_error=True)
+_cg32 = ctypes.WinDLL("gdi32", use_last_error=True)
+_cu32.OpenClipboard.argtypes = [ctypes.c_void_p]
+_cu32.EnumClipboardFormats.argtypes = [ctypes.c_uint]
+_cu32.EnumClipboardFormats.restype = ctypes.c_uint
+_cu32.GetClipboardData.argtypes = [ctypes.c_uint]
+_cu32.GetClipboardData.restype = ctypes.c_void_p
+_cu32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+_cu32.SetClipboardData.restype = ctypes.c_void_p
+_cu32.RegisterClipboardFormatW.argtypes = [ctypes.c_wchar_p]
+_cu32.RegisterClipboardFormatW.restype = ctypes.c_uint
+_cu32.GetClipboardSequenceNumber.restype = ctypes.c_ulong
+_cu32.CreateWindowExW.argtypes = [ctypes.c_ulong, ctypes.c_wchar_p, ctypes.c_wchar_p,
+                                  ctypes.c_ulong, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                  ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p,
+                                  ctypes.c_void_p, ctypes.c_void_p]
+_cu32.CreateWindowExW.restype = ctypes.c_void_p
+_cu32.DestroyWindow.argtypes = [ctypes.c_void_p]
+_ck32.GlobalAlloc.argtypes = [ctypes.c_uint, ctypes.c_size_t]
+_ck32.GlobalAlloc.restype = ctypes.c_void_p
+_ck32.GlobalLock.argtypes = [ctypes.c_void_p]
+_ck32.GlobalLock.restype = ctypes.c_void_p
+_ck32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+_ck32.GlobalSize.argtypes = [ctypes.c_void_p]
+_ck32.GlobalSize.restype = ctypes.c_size_t
+_ck32.GlobalFree.argtypes = [ctypes.c_void_p]
+_cg32.GetEnhMetaFileBits.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p]
+_cg32.GetEnhMetaFileBits.restype = ctypes.c_uint
+_cg32.SetEnhMetaFileBits.argtypes = [ctypes.c_uint, ctypes.c_char_p]
+_cg32.SetEnhMetaFileBits.restype = ctypes.c_void_p
+
+
+class _OpenClipboard:
+    """OpenClipboard needs an owner window or SetClipboardData fails; another
+    process may also be holding the clipboard for a moment, so retry briefly."""
+
+    def __enter__(self):
+        self.hwnd = _cu32.CreateWindowExW(0, "STATIC", None, 0, 0, 0, 0, 0,
+                                          None, None, None, None)
+        deadline = time.time() + 0.5
+        while not _cu32.OpenClipboard(self.hwnd):
+            if time.time() > deadline:
+                _cu32.DestroyWindow(self.hwnd)
+                raise OSError("clipboard is busy")
+            time.sleep(0.01)
+        return self
+
+    def __exit__(self, *exc):
+        _cu32.CloseClipboard()
+        _cu32.DestroyWindow(self.hwnd)
+        return False
+
+
+def _put_bytes(fmt, data):
+    h = _ck32.GlobalAlloc(0x0002, max(len(data), 1))  # GMEM_MOVEABLE
+    if not h:
+        return
+    p = _ck32.GlobalLock(h)
+    if p:
+        ctypes.memmove(p, data, len(data))
+        _ck32.GlobalUnlock(h)
+    if not _cu32.SetClipboardData(fmt, h):
+        _ck32.GlobalFree(h)
+
+
+def _mark_private():
+    # clipboard history and cloud sync skip content carrying this format
+    fmt = _cu32.RegisterClipboardFormatW("ExcludeClipboardContentFromMonitorProcessing")
+    if fmt:
+        _put_bytes(fmt, b"\0\0\0\0")
+
+
+def clipboard_sequence():
+    return _cu32.GetClipboardSequenceNumber()
+
+
+def clipboard_snapshot():
+    """Every copyable format on the clipboard, in the owner's preference order."""
+    items = []
+    with _OpenClipboard():
+        fmt = _cu32.EnumClipboardFormats(0)
+        while fmt:
+            if fmt not in _HANDLE_FORMATS and not 0x200 <= fmt <= 0x3FF:
+                h = _cu32.GetClipboardData(fmt)
+                if h and fmt == CF_ENHMETAFILE:
+                    n = _cg32.GetEnhMetaFileBits(h, 0, None)
+                    if n:
+                        buf = ctypes.create_string_buffer(n)
+                        _cg32.GetEnhMetaFileBits(h, n, buf)
+                        items.append((fmt, buf.raw))
+                elif h:
+                    size = _ck32.GlobalSize(h)
+                    p = _ck32.GlobalLock(h) if size else None
+                    if p:
+                        items.append((fmt, ctypes.string_at(p, size)))
+                        _ck32.GlobalUnlock(h)
+            fmt = _cu32.EnumClipboardFormats(fmt)
+    return items
+
+
+def clipboard_restore(items):
+    with _OpenClipboard():
+        _cu32.EmptyClipboard()
+        for fmt, data in items:
+            if fmt == CF_ENHMETAFILE:
+                hemf = _cg32.SetEnhMetaFileBits(len(data), data)
+                if hemf:
+                    _cu32.SetClipboardData(fmt, hemf)
+            else:
+                _put_bytes(fmt, data)
+        if items:
+            _mark_private()   # it is already in the history from the first copy
+
+
+def clipboard_get_text():
+    with _OpenClipboard():
+        h = _cu32.GetClipboardData(CF_UNICODETEXT)
+        if not h:
+            return ""
+        p = _ck32.GlobalLock(h)
+        if not p:
+            return ""
+        try:
+            return ctypes.wstring_at(p)
+        finally:
+            _ck32.GlobalUnlock(h)
+
+
+def clipboard_set_text(text):
+    with _OpenClipboard():
+        _cu32.EmptyClipboard()
+        _put_bytes(CF_UNICODETEXT, (text + "\0").encode("utf-16-le"))
+        _mark_private()
+
+
+def copy_selection(combo, timeout=0.6):
+    """Send Ctrl+C / Ctrl+X and return what landed on the clipboard, or None
+    when the app put nothing there (no selection, or a read-only control)."""
+    seq = clipboard_sequence()
+    send_key_combo(combo)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        time.sleep(0.03)
+        if clipboard_sequence() != seq:
+            time.sleep(0.03)   # let the owner finish writing every format
+            try:
+                return clipboard_get_text()
+            except OSError:
+                continue
+    return None
+
 # ---------------------------------------------------------
 # Settings
 # ---------------------------------------------------------
@@ -204,64 +466,23 @@ def load_settings():
         pass
     return DEFAULT_SETTINGS.copy()
 
+_settings_lock = threading.Lock()
+
 def save_settings(s):
-    try:
-        with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(s, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
-
-# ---------------------------------------------------------
-# Character Maps
-# ---------------------------------------------------------
-
-EN_TO_AR_MAP = {
-    'q': 'ض', 'w': 'ص', 'e': 'ث', 'r': 'ق', 't': 'ف', 'y': 'غ',
-    'u': 'ع', 'i': 'ه', 'o': 'خ', 'p': 'ح', '[': 'ج', ']': 'د',
-    'a': 'ش', 's': 'س', 'd': 'ي', 'f': 'ب', 'g': 'ل', 'h': 'ا',
-    'j': 'ت', 'k': 'ن', 'l': 'م', ';': 'ك', "'": 'ط',
-    'z': 'ئ', 'x': 'ء', 'c': 'ؤ', 'v': 'ر', 'b': 'لا', 'n': 'ى',
-    'm': 'ة', ',': 'و', '.': 'ز', '/': 'ظ',
-    '`': 'ذ', '~': 'ّ',
-    'Q': 'َ', 'W': 'ً', 'E': 'ُ', 'R': 'ٌ', 'T': 'لإ', 'Y': 'إ',
-    'U': '`', 'I': '÷', 'O': '×', 'P': '؛', '{': '<', '}': '>',
-    'A': 'ِ', 'S': 'ٍ', 'D': ']', 'F': '[', 'G': 'لأ', 'H': 'أ',
-    'J': 'ـ', 'K': '،', 'L': '/', ':': ':', '"': '"',
-    'Z': '~', 'X': 'ْ', 'C': '{', 'V': '}', 'B': 'لآ', 'N': 'آ',
-    'M': "'", '<': ',', '>': '.', '?': '؟'
-}
-
-AR_TO_EN_MAP = {}
-for k, v in EN_TO_AR_MAP.items():
-    if len(v) == 1:
-        AR_TO_EN_MAP[v] = k
-
-COMPOUND_AR = [('لآ', 'B'), ('لأ', 'G'), ('لإ', 'T'), ('لا', 'b')]
-
-def convert_text(text, direction="auto"):
-    ar_count = sum(1 for c in text if '\u0600' <= c <= '\u06FF')
-    en_count = sum(1 for c in text if c.isascii() and c.isalpha())
-
-    if direction == "auto":
-        is_arabic = ar_count >= en_count
-    elif direction == "ar_to_en":
-        is_arabic = True
-    else:
-        is_arabic = False
-
-    result = []
-    if is_arabic:
-        temp = text
-        for ar, en in COMPOUND_AR:
-            temp = temp.replace(ar, en)
-        for ch in temp:
-            result.append(AR_TO_EN_MAP.get(ch, ch))
-    else:
-        for ch in text:
-            result.append(EN_TO_AR_MAP.get(ch, ch))
-
-    return "".join(result)
-
+    # saves come from the UI thread and the conversion worker alike. Write a temp
+    # file and swap it in, so a race or a crash mid-write can never leave a
+    # truncated file that load_settings would quietly replace with defaults.
+    with _settings_lock:
+        tmp = SETTINGS_FILE + ".tmp"
+        try:
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(dict(s), f, ensure_ascii=False, indent=2)
+            os.replace(tmp, SETTINGS_FILE)
+        except Exception:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
 # ---------------------------------------------------------
 # Colors
@@ -524,11 +745,16 @@ def fetch_latest_release():
             asset = a
             break
 
+    # GitHub publishes a SHA-256 for every release asset as "sha256:<hex>"
+    digest = (asset or {}).get("digest") or ""
+    sha256 = digest[7:].lower() if digest.lower().startswith("sha256:") else None
+
     return {
         "version": version,
         "notes": data.get("body") or "",
         "url": (asset or {}).get("browser_download_url"),
         "size": (asset or {}).get("size") or 0,
+        "sha256": sha256,
     }
 
 
@@ -555,31 +781,52 @@ def running_installed_copy():
         return False
 
 
-def download_update(url, dest, on_progress=None, cancelled=None):
-    """Stream an update to dest. Raises on a non-GitHub host or a truncated file."""
+def _check_download_host(url):
     from urllib.parse import urlparse
     parsed = urlparse(url)
     if parsed.scheme != "https" or parsed.hostname not in ALLOWED_DOWNLOAD_HOSTS:
         raise ValueError(f"refusing to download from {parsed.hostname or url!r}")
 
+
+def download_update(url, dest, on_progress=None, cancelled=None,
+                    expected_size=0, expected_sha256=None):
+    """Stream an update to dest. Raises on a non-GitHub host (before or after
+    redirects), a truncated file, or a size or SHA-256 that does not match what
+    the release says."""
+    import hashlib
+    _check_download_host(url)
+
     tmp = dest + ".part"
-    with _urlopen(url, timeout=30) as resp:
-        total = int(resp.headers.get("Content-Length") or 0)
-        done = 0
-        with open(tmp, "wb") as f:
-            while True:
-                if cancelled and cancelled():
-                    raise RuntimeError("cancelled")
-                chunk = resp.read(256 * 1024)
-                if not chunk:
-                    break
-                f.write(chunk)
-                done += len(chunk)
-                if on_progress:
-                    on_progress(done, total)
-    if total and done < total:
-        os.remove(tmp)
-        raise IOError("download truncated")
+    sha = hashlib.sha256()
+    try:
+        with _urlopen(url, timeout=30) as resp:
+            _check_download_host(resp.geturl())   # where the redirects landed
+            total = int(resp.headers.get("Content-Length") or 0) or expected_size
+            done = 0
+            with open(tmp, "wb") as f:
+                while True:
+                    if cancelled and cancelled():
+                        raise RuntimeError("cancelled")
+                    chunk = resp.read(256 * 1024)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    sha.update(chunk)
+                    done += len(chunk)
+                    if on_progress:
+                        on_progress(done, total)
+        if total and done != total:
+            raise IOError("download truncated")
+        if expected_size and done != expected_size:
+            raise IOError("download size does not match the release")
+        if expected_sha256 and sha.hexdigest() != expected_sha256:
+            raise IOError("download checksum does not match the release")
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
     if os.path.exists(dest):
         os.remove(dest)
     os.replace(tmp, dest)
@@ -941,7 +1188,9 @@ class UpdateDialog(ctk.CTkToplevel):
                 self.after(0, lambda: self._set_progress(pct))
 
             download_update(self.release["url"], dest, progress,
-                            cancelled=lambda: self._cancelled)
+                            cancelled=lambda: self._cancelled,
+                            expected_size=self.release.get("size") or 0,
+                            expected_sha256=self.release.get("sha256"))
 
             self.after(0, lambda: self.status.configure(
                 text=self.t("update_launching"), text_color=C["success"]))
@@ -1291,6 +1540,7 @@ class App(ctk.CTk):
     def _start_mouse_listener(self):
         self._last_click_time = 0
         self._click_count = 0
+        self._press_in_client = True
 
         def on_click(x, y, button, pressed):
             if button != pynput_mouse.Button.left:
@@ -1299,6 +1549,9 @@ class App(ctk.CTk):
                 self._drag_start_x = x
                 self._drag_start_y = y
                 self._mouse_is_down = True
+                # hit-test on the Tk thread: the hook thread must return quickly
+                self._press_in_client = True
+                self.after(0, lambda: self._record_press_target(x, y))
                 now = time.time()
                 if now - self._last_click_time < 0.4:
                     self._click_count += 1
@@ -1329,26 +1582,27 @@ class App(ctk.CTk):
     def _floating_enabled(self):
         return self.settings.get("show_floating_button", True)
 
+    def _record_press_target(self, x, y):
+        self._press_in_client = point_in_client_area(x, y)
+
     def _check_and_show(self, x, y):
         if not self.is_active or self.processing or not self._floating_enabled():
             # bailing out here also skips the clipboard probe below, so with the
             # button off nothing touches the clipboard until you press the hotkey
             return
+        if not self._press_in_client:
+            # moving or resizing a window, or dragging a scrollbar — not a selection
+            return
         def check():
+            if foreground_is_terminal():
+                return
             try:
-                old_clip = pyperclip.paste()
-            except Exception:
-                old_clip = ""
-            try:
-                pyperclip.copy("")
-                time.sleep(0.02)
-                send_key_combo(['ctrl', 'c'])
-                time.sleep(0.1)
-                text = pyperclip.paste()
-                if old_clip and not text:
-                    pyperclip.copy(old_clip)
+                saved = clipboard_snapshot()
+                seq = clipboard_sequence()
+                text = copy_selection(['ctrl', 'c'], timeout=0.3)
+                if clipboard_sequence() != seq:
+                    clipboard_restore(saved)
                 if text and text.strip():
-                    pyperclip.copy(old_clip)
                     self.after(0, lambda: self.floating_btn.show_at(x, y))
             except Exception:
                 pass
@@ -1486,6 +1740,11 @@ class App(ctk.CTk):
                 pynput_keyboard.Key.end:'end', pynput_keyboard.Key.insert:'insert',
             }
             if key in special: return special[key]
+            # name letters and digits by physical key, not by the character typed:
+            # under the Arabic layout A types ش, and with Ctrl held it types \x01
+            vk = getattr(key, 'vk', None)
+            if vk is not None and (0x30 <= vk <= 0x39 or 0x41 <= vk <= 0x5A):
+                return chr(vk).lower()
             if hasattr(key, 'char') and key.char: return key.char.lower()
         except Exception:
             pass
@@ -1550,40 +1809,32 @@ class App(ctk.CTk):
 
     def _convert_worker(self):
         try:
-            try: old_clip = pyperclip.paste()
-            except: old_clip = ""
+            wait_for_modifiers_released()
+            if foreground_is_terminal():
+                return
 
-            pyperclip.copy("")
-            time.sleep(0.03)
-            send_key_combo(['ctrl', 'x'])
-            time.sleep(0.15)
+            saved = clipboard_snapshot()
+            seq = clipboard_sequence()
 
-            text = ""
-            for _ in range(12):
-                text = pyperclip.paste()
-                if text: break
-                time.sleep(0.04)
-
-            if not text or not text.strip():
-                pyperclip.copy("")
-                time.sleep(0.03)
-                send_key_combo(['ctrl', 'c'])
-                time.sleep(0.15)
-                for _ in range(12):
-                    text = pyperclip.paste()
-                    if text: break
-                    time.sleep(0.04)
-                if not text or not text.strip():
-                    if old_clip: pyperclip.copy(old_clip)
-                    self.processing = False
-                    return
+            # cut first so the paste replaces the selection; fall back to copy for
+            # read-only controls that refuse a cut
+            text = copy_selection(['ctrl', 'x'])
+            if not text:
+                text = copy_selection(['ctrl', 'c'])
+            if not text:
+                if clipboard_sequence() != seq:
+                    clipboard_restore(saved)
+                return
 
             converted = convert_text(text, self.settings.get("direction", "auto"))
 
-            pyperclip.copy(converted)
+            clipboard_set_text(converted)
             time.sleep(0.03)
             send_key_combo(['ctrl', 'v'])
-            time.sleep(0.08)
+            # the target reads the clipboard while handling the keystroke; give it
+            # time before putting the user's own clipboard back
+            time.sleep(0.5)
+            clipboard_restore(saved)
 
             self.conversion_count += 1
             self.settings["total_conversions"] = self.settings.get("total_conversions", 0) + 1

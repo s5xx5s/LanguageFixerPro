@@ -21,7 +21,9 @@ Or `اثممخ` when you meant **hello**?
 - **Floating Button**: Appears automatically when you select text (Mouse or Keyboard).
 - **Keyboard Centric**: Full support for Shift + Arrow selection.
 - **Stealth Mode**: Turn the floating button off and drive everything from the hotkey — with it off, the app stops touching your clipboard on every selection.
-- **Smart Detection**: Automatically detects if the text needs to be Arabic or English.
+- **Smart Detection**: Automatically detects if the text needs to be Arabic or English — including telling `b` from `gh` (both type `لا`), so *light* and *enough* come back right.
+- **Clipboard Kept**: Whatever you had copied — text, an image, files — is put back after every conversion, and nothing the app writes lands in Win+V history.
+- **Terminal-Safe**: In terminals (Windows Terminal, cmd, PowerShell, Git Bash, PuTTY…) the app stays out of the way, since Ctrl+C there means *interrupt*.
 - **Interactive Feedback**: Subtle sound effects and visual cues.
 - **Persistance**: Remembers your settings and window position.
 - **Arabic Interface**: One click on the globe icon switches the whole UI to Arabic, laid out right-to-left.
@@ -142,8 +144,10 @@ in the header — it does **not** download anything on its own.
 
 Click the notice (or **Check Updates** in the About dialog) to see the version, then
 choose **Download & Install**. Only then is the installer fetched, and only from
-GitHub's own hosts — any other host is refused. The installer then replaces the app
-and restarts it.
+GitHub's own hosts — any other host is refused, before and after redirects. The file's
+size and SHA-256 are checked against what the release publishes. The installer then
+replaces the app in its existing folder and restarts it, keeping your startup and
+shortcut choices as they were.
 
 Running the portable exe instead? The dialog points you at the releases page rather
 than installing over your portable copy.
@@ -191,10 +195,19 @@ build skips it silently when Inno Setup is not present.
 | Script | Purpose |
 |--------|---------|
 | `main.py` | The application |
+| `converter.py` | The Arabic ⇄ English layout conversion, free of GUI code |
+| `version.py` | The version number — bump it here only |
 | `installer.py` | GUI installer / uninstaller (also builds to an exe) |
 | `installer.iss` | Inno Setup script (optional alternative installer) |
 | `make_icon.py` | Generates `app_icon.ico`, with a simplified mark at 16/24px |
 | `build_exe.py` | Builds everything |
+
+Run the tests with:
+
+```bash
+python -m pip install pytest
+python -m pytest tests
+```
 
 ## Contributing
 

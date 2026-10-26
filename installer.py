@@ -19,7 +19,7 @@ import traceback
 import winreg
 
 APP_NAME = "Language Fixer Pro"
-APP_VERSION = "1.5.0"
+from version import APP_VERSION
 APP_PUBLISHER = "s5xx5s"
 APP_GITHUB = "https://github.com/s5xx5s/LanguageFixerPro"
 EXE_NAME = "LanguageFixerPro.exe"
@@ -50,9 +50,26 @@ def resource_path(name):
     return os.path.join(base, name)
 
 
+INSTALL_FOLDER = "LanguageFixerPro"
+
+# The only files this installer ever writes into the install folder. Uninstall
+# removes exactly these and nothing else, so pointing the install at a folder
+# that already holds other data can never cost the user that data.
+OWNED_FILES = (EXE_NAME, UNINST_NAME)
+
+
 def default_install_dir():
     local = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-    return os.path.join(local, "Programs", "LanguageFixerPro")
+    return os.path.join(local, "Programs", INSTALL_FOLDER)
+
+
+def normalize_install_dir(path):
+    """Always install into a folder of our own. A typed path like D:\\ or
+    Documents gets a LanguageFixerPro subfolder rather than being used as-is."""
+    path = os.path.abspath(os.path.expandvars(os.path.expanduser(path.strip())))
+    if os.path.basename(path.rstrip("\\/")).lower() != INSTALL_FOLDER.lower():
+        path = os.path.join(path, INSTALL_FOLDER)
+    return path
 
 
 def start_menu_dir():
@@ -115,16 +132,23 @@ def set_startup(enabled, exe_path):
         pass
 
 
+def startup_registered():
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_REG_PATH) as key:
+            return bool(winreg.QueryValueEx(key, STARTUP_REG_NAME)[0])
+    except Exception:
+        return False
+
+
 def register_uninstall(install_dir):
     """Puts the app in Settings > Apps > Installed apps."""
     exe = os.path.join(install_dir, EXE_NAME)
     size_kb = 0
-    for root, _, files in os.walk(install_dir):
-        for f in files:
-            try:
-                size_kb += os.path.getsize(os.path.join(root, f)) // 1024
-            except OSError:
-                pass
+    for name in OWNED_FILES:
+        try:
+            size_kb += os.path.getsize(os.path.join(install_dir, name)) // 1024
+        except OSError:
+            pass
     try:
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, UNINSTALL_REG_PATH) as key:
             values = {
@@ -189,6 +213,43 @@ def installed_dir_from_registry():
             return winreg.QueryValueEx(key, "InstallLocation")[0]
     except Exception:
         return None
+
+
+def remove_installation(install_dir):
+    """Undo an install: startup entry, shortcuts, registry, and our own files.
+
+    Only OWNED_FILES are deleted, and the folder itself is removed only if that
+    leaves it empty — anything else the user keeps there survives."""
+    stop_running_app()
+    set_startup(False, "")
+    for link in [os.path.join(start_menu_dir(), f"{APP_NAME}.lnk"),
+                 os.path.join(desktop_dir(), f"{APP_NAME}.lnk")]:
+        try:
+            os.remove(link)
+        except OSError:
+            pass
+    unregister_uninstall()
+
+    me = os.path.normcase(os.path.abspath(sys.executable))
+    leftover = None
+    for name in OWNED_FILES:
+        p = os.path.join(install_dir, name)
+        if os.path.normcase(os.path.abspath(p)) == me:
+            leftover = p           # still running — delete after we exit
+            continue
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+
+    # a detached shell finishes the job once this process has exited. rmdir
+    # without /s only removes the folder when it is empty.
+    steps = ["ping 127.0.0.1 -n 3 >nul"]
+    if leftover:
+        steps.append(f'del /f /q "{leftover}"')
+    steps.append(f'rmdir "{install_dir}"')
+    subprocess.Popen(" & ".join(steps) + " 2>nul", shell=True, creationflags=NO_WINDOW,
+                     cwd=os.environ.get("TEMP") or os.path.expanduser("~"))
 
 
 # ---------------------------------------------------------
@@ -356,7 +417,8 @@ class Installer(BaseWindow):
         threading.Thread(target=self._install_worker, daemon=True).start()
 
     def _install_worker(self):
-        target = self.install_dir.get().strip()
+        target = normalize_install_dir(self.install_dir.get() or default_install_dir())
+        self.after(0, lambda: self.install_dir.set(target))
         try:
             src = payload_exe()
             if not os.path.exists(src):
@@ -474,32 +536,7 @@ class Uninstaller(BaseWindow):
         self.after(100, self._uninstall)
 
     def _uninstall(self):
-        stop_running_app()
-        set_startup(False, "")
-        for link in [os.path.join(start_menu_dir(), f"{APP_NAME}.lnk"),
-                     os.path.join(desktop_dir(), f"{APP_NAME}.lnk")]:
-            try:
-                os.remove(link)
-            except OSError:
-                pass
-        unregister_uninstall()
-
-        # remove everything except this still-running binary, then let a detached
-        # shell delete the folder once we have exited
-        for root, dirs, files in os.walk(self.install_dir):
-            for f in files:
-                p = os.path.join(root, f)
-                if os.path.normcase(p) == os.path.normcase(sys.executable):
-                    continue
-                try:
-                    os.remove(p)
-                except OSError:
-                    pass
-
-        subprocess.Popen(
-            f'ping 127.0.0.1 -n 3 >nul & rmdir /s /q "{self.install_dir}"',
-            shell=True, creationflags=NO_WINDOW,
-        )
+        remove_installation(self.install_dir)
         self.status.configure(text="Uninstalled.", text_color=C["success"])
         self.after(700, self.destroy)
 
@@ -507,12 +544,29 @@ class Uninstaller(BaseWindow):
 # ---------------------------------------------------------
 
 def silent_install(target=None, launch=False):
-    """Unattended install with the default options. Returns an exit code."""
-    target = target or default_install_dir()
+    """Unattended install. Returns an exit code.
+
+    Over an existing install (the in-app updater's case) it upgrades in place and
+    keeps the choices made the first time: same folder, startup only if it is
+    still registered, and only the shortcuts that still exist. A fresh install
+    gets the defaults."""
+    previous = installed_dir_from_registry()
+    upgrading = bool(previous) and os.path.exists(os.path.join(previous, EXE_NAME))
+    if upgrading and not target:
+        target = previous
+    else:
+        target = normalize_install_dir(target or default_install_dir())
+
     src = payload_exe()
     if not os.path.exists(src):
         print("ERROR: bundled application binary is missing.")
         return 1
+    want_startup = startup_registered() if upgrading else True
+    links = [os.path.join(start_menu_dir(), f"{APP_NAME}.lnk"),
+             os.path.join(desktop_dir(), f"{APP_NAME}.lnk")]
+    if upgrading:
+        links = [p for p in links if os.path.exists(p)]
+
     stop_running_app()
     os.makedirs(target, exist_ok=True)
     exe_path = os.path.join(target, EXE_NAME)
@@ -523,9 +577,9 @@ def silent_install(target=None, launch=False):
     except OSError as e:
         print(f"ERROR: could not write to {target}: {e}")
         return 1
-    create_shortcut(os.path.join(start_menu_dir(), f"{APP_NAME}.lnk"), exe_path)
-    create_shortcut(os.path.join(desktop_dir(), f"{APP_NAME}.lnk"), exe_path)
-    set_startup(True, exe_path)
+    for link in links:
+        create_shortcut(link, exe_path)
+    set_startup(want_startup, exe_path)
     register_uninstall(target)
     if launch:
         subprocess.Popen([exe_path], cwd=target, creationflags=NO_WINDOW)
@@ -538,26 +592,7 @@ def silent_uninstall(target=None):
     if not target:
         print("ERROR: no installation found.")
         return 1
-    stop_running_app()
-    set_startup(False, "")
-    for link in [os.path.join(start_menu_dir(), f"{APP_NAME}.lnk"),
-                 os.path.join(desktop_dir(), f"{APP_NAME}.lnk")]:
-        try:
-            os.remove(link)
-        except OSError:
-            pass
-    unregister_uninstall()
-    for root, _, files in os.walk(target):
-        for f in files:
-            p = os.path.join(root, f)
-            if os.path.normcase(p) == os.path.normcase(sys.executable):
-                continue
-            try:
-                os.remove(p)
-            except OSError:
-                pass
-    subprocess.Popen(f'ping 127.0.0.1 -n 3 >nul & rmdir /s /q "{target}"',
-                     shell=True, creationflags=NO_WINDOW)
+    remove_installation(target)
     print(f"Uninstalled from {target}")
     return 0
 
