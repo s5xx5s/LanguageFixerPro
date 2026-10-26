@@ -11,3 +11,4 @@ venv/
 .venv/
 *.exe
 .langfixer_pro.json
+.superpowers/
