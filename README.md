@@ -5,6 +5,7 @@
 [![Python](https://img.shields.io/badge/Python-3.8%2B-yellow)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows-blue)](https://www.microsoft.com/windows)
 [![Built With](https://img.shields.io/badge/Built%20With-Vibe%20Coding-purple)](https://github.com/s5xx5s)
+[![Build](https://github.com/s5xx5s/LanguageFixerPro/actions/workflows/build.yml/badge.svg)](https://github.com/s5xx5s/LanguageFixerPro/actions/workflows/build.yml)
 
 > **Fix text typed in the wrong keyboard layout — instantly.**
 
@@ -208,6 +209,27 @@ Run the tests with:
 python -m pip install pytest
 python -m pytest tests
 ```
+
+## Code Signing
+
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by
+[SignPath Foundation](https://signpath.org).
+
+Release binaries are built from this repository by the
+[Build workflow](.github/workflows/build.yml) on GitHub Actions, never on a developer
+machine, so every signed file traces back to a public commit. Releases up to v1.5.1
+were built locally and are unsigned.
+
+| Role | Members |
+|------|---------|
+| Committers and reviewers | [s5xx5s](https://github.com/s5xx5s) |
+| Approvers | [s5xx5s](https://github.com/s5xx5s) |
+
+**Privacy:** the app sends nothing anywhere except one request on launch to the
+GitHub releases API to see if a newer version exists, and the installer download
+itself when you choose **Download & Install**. No usage data, no telemetry, and none of
+the text you convert ever leaves your machine. Turn the update check off with
+`"check_updates": false` (see [Updates](#updates)).
 
 ## Contributing
 
